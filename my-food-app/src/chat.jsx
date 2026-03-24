@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from './src/supabase';
+import { supabase } from './supabase';
 
 function Chat() {
   const [messages, setMessages] = useState([]);

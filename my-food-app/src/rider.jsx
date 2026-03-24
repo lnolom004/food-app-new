@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './src/supabase';
+import { supabase } from './supabase';
 
 function Rider() {
   const [orders, setOrders] = useState([]);
