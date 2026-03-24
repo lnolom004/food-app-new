@@ -1,14 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-client';
 
-// 🔗 URL และ Key ของโปรเจกต์คุณ (ตรวจสอบให้ตรงกับหน้า Settings > API ใน Supabase นะครับ)
-const supabaseUrl = 'https://xjlfyebokojtviztzmeh.supabase.co'
-const supabaseKey = 'sb_publishable_C_blxojGGDxAK9SSN06OHQ_cz0PW_lf'
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// 🚀 สร้างตัวเชื่อมต่อ (Client)
-export const supabase = createClient(supabaseUrl, supabaseKey, {
-  realtime: {
-    params: {
-      eventsPerSecond: 10,
-    },
-  },
-})
+export const supabase = createClient(supabaseUrl, supabaseKey);
