@@ -4,4 +4,5 @@ const supabaseUrl = 'https://your-url.supabase.co'
 const supabaseKey = 'your-anon-key'
 
 // 
-export const supabase = createClient(supabaseUrl, supabaseKey) 
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
