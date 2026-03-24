@@ -6,10 +6,10 @@ import './App.css';
 // นำเข้าหน้าต่างๆ (ตรวจสอบชื่อไฟล์ให้ตรงกับในเครื่องเพื่อนนะ)
 import Login from './Login';
 import Register from './Register';
-import OrderFood from './OrderFood';
-import Rider from './Rider';
-import Admin from './Admin';
-import Chat from './Chat';
+import OrderFood from './orderFood';
+import Rider from './rider';
+import Admin from './admin';
+import Chat from './chat';
 
 function App() {
   const [session, setSession] = useState(null);
