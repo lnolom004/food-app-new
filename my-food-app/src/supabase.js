@@ -1,10 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = 'https://your-url.supabase.co'
+const supabaseKey = 'your-anon-key'
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
- supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-export const supabase = createClient(supabaseUrl, supabaseKey);
+// ให้เหลือแค่บรรทัดนี้ชุดเดียวพอครับ
+export const supabase = createClient(supabaseUrl, supabaseKey) 
