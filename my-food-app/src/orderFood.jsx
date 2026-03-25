@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase'; // ตรวจสอบชื่อไฟล์ให้ตรงกับโปรเจกต์
+import { supabase } from './supabase'; // ตรวจสอบว่าไฟล์ชื่อ supabase.js อยู่ในโฟลเดอร์เดียวกัน
 import { useNavigate } from 'react-router-dom';
 
 const OrderFood = () => {
@@ -8,78 +8,75 @@ const OrderFood = () => {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  // 1. ฟังก์ชันดึงข้อมูลอาหารจาก Supabase
+  // 1. ดึงข้อมูลจากตาราง 'foods' ใน Supabase
   useEffect(() => {
+    const fetchFoods = async () => {
+      try {
+        setLoading(true);
+        // ดึงข้อมูลทั้งหมดจากตาราง foods
+        const { data, error } = await supabase
+          .from('foods') 
+          .select('*');
+
+        if (error) throw error;
+        setFoods(data || []);
+      } catch (error) {
+        console.error('Error:', error.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchFoods();
   }, []);
 
-  const fetchFoods = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('foods') // เปลี่ยนเป็นชื่อตารางอาหารของคุณ (เช่น products หรือ menus)
-        .select('*');
-
-      if (error) throw error;
-      setFoods(data || []);
-    } catch (error) {
-      console.error('Error fetching foods:', error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 2. ฟังก์ชันค้นหาอาหาร
+  // 2. ระบบค้นหา (กรองจากชื่ออาหาร)
   const filteredFoods = foods.filter(food =>
-    food.name.toLowerCase().includes(searchTerm.toLowerCase())
+    food.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
-  // 3. ฟังก์ชันเพิ่มลงตะกร้า (ตัวอย่าง)
-  const addToCart = (food) => {
-    alert(`เพิ่ม ${food.name} ลงตะกร้าเรียบร้อยแล้ว!`);
-    // คุณสามารถเพิ่ม Logic การจัดการตะกร้า (Context/Redux) ตรงนี้ได้
-  };
 
   return (
     <div style={styles.container}>
-      {/* ส่วนหัวแอป */}
-      <header style={styles.header}>
-        <h1 style={styles.title}>🍔 FoodApp <span style={{color:'#ff6600'}}>Pro</span></h1>
-        <div style={styles.searchContainer}>
+      {/* --- ส่วนหัวแอป (Header) --- */}
+      <div style={styles.header}>
+        <h1 style={styles.logo}>🍔 FoodApp <span style={{color: '#ff6600'}}>Pro</span></h1>
+        
+        {/* ช่องค้นหา */}
+        <div style={styles.searchBox}>
           <input
             type="text"
-            placeholder="🔍 ค้นหาเมนูอาหาร..."
+            placeholder="🔍 ค้นหาเมนูที่คุณต้องการ..."
             style={styles.searchInput}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-      </header>
+      </div>
 
-      {/* สถานะโหลดข้อมูล */}
+      {/* --- ส่วนแสดงผลรายการอาหาร (Grid) --- */}
       {loading ? (
-        <div style={styles.centerText}>กำลังโหลดเมนูอร่อย...</div>
+        <div style={styles.statusText}>กำลังเตรียมเมนูอร่อย...</div>
       ) : (
-        <div style={styles.grid}>
+        <div style={styles.foodGrid}>
           {filteredFoods.map((food) => (
             <div key={food.id} style={styles.card}>
-              {/* ส่วนของรูปภาพ - แก้ไขให้เท่ากันทุกลูก */}
+              
+              {/* จุดสำคัญ: ตัวควบคุมรูปภาพให้เท่ากัน */}
               <div style={styles.imageWrapper}>
                 <img 
                   src={food.image_url || 'https://via.placeholder.com'} 
                   alt={food.name} 
-                  style={styles.image} 
+                  style={styles.foodImage} 
                 />
               </div>
 
-              {/* รายละเอียดอาหาร */}
-              <div style={styles.cardBody}>
+              <div style={styles.cardContent}>
                 <h3 style={styles.foodName}>{food.name}</h3>
-                <p style={styles.foodPrice}>฿{food.price}</p>
+                <p style={styles.priceTag}>฿{food.price}</p>
                 <button 
-                  onClick={() => addToCart(food)}
-                  style={styles.addButton}
+                  style={styles.orderButton}
+                  onClick={() => alert(`เพิ่ม ${food.name} ลงในตะกร้าแล้ว!`)}
                 >
-                  🛒 เพิ่มลงตะกร้า
+                  เพิ่มลงตะกร้า
                 </button>
               </div>
             </div>
@@ -87,102 +84,102 @@ const OrderFood = () => {
         </div>
       )}
 
-      {/* ถ้าไม่พบเมนูที่ค้นหา */}
+      {/* กรณีค้นหาไม่เจอ */}
       {!loading && filteredFoods.length === 0 && (
-        <div style={styles.centerText}>ไม่พบเมนูที่คุณค้นหา...</div>
+        <div style={styles.statusText}>ไม่พบเมนูที่คุณค้นหา 😅</div>
       )}
     </div>
   );
 };
 
-// --- Styles: Dark Theme & Uniform Design ---
+// --- การตั้งค่าดีไซน์ (Dark Mode & Professional UI) ---
 const styles = {
   container: {
     backgroundColor: '#000000', // พื้นหลังดำสนิท
-    color: '#ffffff',
     minHeight: '100vh',
     padding: '20px',
+    color: '#ffffff',
     fontFamily: "'Kanit', sans-serif",
   },
   header: {
     textAlign: 'center',
-    marginBottom: '30px',
+    marginBottom: '40px',
   },
-  title: {
-    fontSize: '2.5rem',
+  logo: {
+    fontSize: '32px',
     marginBottom: '20px',
   },
-  searchContainer: {
-    maxWidth: '500px',
+  searchBox: {
+    maxWidth: '600px',
     margin: '0 auto',
   },
   searchInput: {
     width: '100%',
-    padding: '12px 20px',
-    borderRadius: '25px',
+    padding: '12px 25px',
+    borderRadius: '30px',
     border: '1px solid #333',
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#1a1a1a', // ช่องค้นหาสีเทาเข้ม
     color: 'white',
     fontSize: '16px',
     outline: 'none',
   },
-  grid: {
+  foodGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', // จัดเรียงการ์ดอัตโนมัติ
     gap: '25px',
-    padding: '10px',
+    maxWidth: '1200px',
+    margin: '0 auto',
   },
   card: {
-    backgroundColor: '#1a1a1a', // การ์ดสีเทาเข้ม
-    borderRadius: '15px',
+    backgroundColor: '#1a1a1a', // สีการ์ดเทาเข้ม
+    borderRadius: '20px',
     overflow: 'hidden',
-    boxShadow: '0 8px 20px rgba(0,0,0,0.5)',
+    boxShadow: '0 10px 20px rgba(0,0,0,0.5)',
+    transition: '0.3s',
     border: '1px solid #222',
-    transition: 'transform 0.2s',
   },
   imageWrapper: {
     width: '100%',
-    height: '200px', // บังคับความสูงรูปภาพให้เท่ากันเป๊ะ
+    height: '180px', // **ความสูงรูปภาพคงที่**
     overflow: 'hidden',
-    backgroundColor: '#333',
   },
-  image: {
+  foodImage: {
     width: '100%',
     height: '100%',
-    objectFit: 'cover', // สำคัญ: ปรับรูปภาพให้พอดีกล่องโดยไม่เบี้ยว
+    objectFit: 'cover', // **ทำให้รูปไม่เบี้ยวและเต็มกรอบเป๊ะ**
   },
-  cardBody: {
+  cardContent: {
     padding: '20px',
     textAlign: 'center',
   },
   foodName: {
-    fontSize: '1.2rem',
+    fontSize: '18px',
     margin: '0 0 10px 0',
-    color: '#fff',
+    fontWeight: '500',
   },
-  foodPrice: {
-    fontSize: '1.3rem',
-    color: '#ff6600', // สีส้มเน้นราคา
+  priceTag: {
+    fontSize: '20px',
+    color: '#ff6600',
     fontWeight: 'bold',
     marginBottom: '15px',
   },
-  addButton: {
+  orderButton: {
     width: '100%',
-    padding: '12px',
+    padding: '10px',
     backgroundColor: '#ff6600',
     color: 'white',
     border: 'none',
     borderRadius: '10px',
     cursor: 'pointer',
     fontWeight: 'bold',
-    fontSize: '16px',
-    transition: '0.3s',
+    fontSize: '15px',
   },
-  centerText: {
+  statusText: {
     textAlign: 'center',
     marginTop: '50px',
-    color: '#888',
-  },
+    color: '#666',
+    fontSize: '18px',
+  }
 };
 
 export default OrderFood;
