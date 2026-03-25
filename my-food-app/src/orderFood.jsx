@@ -1,189 +1,188 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase'; // s ตัวเล็กตามรูปในเครื่องคุณ
+import { supabase } from './supabase'; // ตรวจสอบชื่อไฟล์ให้ตรงกับโปรเจกต์
 import { useNavigate } from 'react-router-dom';
 
-export default function OrderFood() {
-  const navigate = useNavigate();
-  const [menus, setMenus] = useState([]);
-  const [cart, setCart] = useState([]);
-  const [myOrders, setMyOrders] = useState([]);
+const OrderFood = () => {
+  const [foods, setFoods] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
 
-  // ============================================================
-  // 1. ฟังก์ชันดึงข้อมูล (Menus และ Orders)
-  // ============================================================
-  const fetchData = async (currentUser) => {
+  // 1. ฟังก์ชันดึงข้อมูลอาหารจาก Supabase
+  useEffect(() => {
+    fetchFoods();
+  }, []);
+
+  const fetchFoods = async () => {
     try {
-      // ดึงเมนูอาหาร
-      const { data: menuData } = await supabase.from('menus').select('*').order('name');
-      // ดึงออเดอร์ของลูกค้าคนนี้เท่านั้น
-      const { data: orderData } = await supabase.from('orders')
-        .select('*')
-        .eq('customer_id', currentUser.id)
-        .order('created_at', { ascending: false });
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('foods') // เปลี่ยนเป็นชื่อตารางอาหารของคุณ (เช่น products หรือ menus)
+        .select('*');
 
-      setMenus(menuData || []);
-      setMyOrders(orderData || []);
-    } catch (err) {
-      console.error("Error fetching data:", err);
+      if (error) throw error;
+      setFoods(data || []);
+    } catch (error) {
+      console.error('Error fetching foods:', error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // ============================================================
-  // 2. ระบบตรวจสอบสิทธิ์และ Real-time Update
-  // ============================================================
-  useEffect(() => {
-    const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/login');
-        return;
-      }
-      setUser(session.user);
-      fetchData(session.user);
+  // 2. ฟังก์ชันค้นหาอาหาร
+  const filteredFoods = foods.filter(food =>
+    food.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-      // --- เปิดระบบ Real-time: แจ้งเตือนเมื่อสถานะออเดอร์เปลี่ยน ---
-      const channel = supabase
-        .channel('order-updates')
-        .on('postgres_changes', 
-          { event: '*', schema: 'public', table: 'orders', filter: `customer_id=eq.${session.user.id}` },
-          (payload) => {
-            console.log('Order changed!', payload);
-            fetchData(session.user); // โหลดข้อมูลใหม่ทันทีที่มีการเปลี่ยนแปลง
-          }
-        )
-        .subscribe();
-
-      return () => supabase.removeChannel(channel);
-    };
-
-    init();
-  }, [navigate]);
-
-  // ============================================================
-  // 3. ฟังก์ชันจัดการตะกร้าและสั่งซื้อ
-  // ============================================================
-  const addToCart = (item) => {
-    const existing = cart.find(i => i.id === item.id);
-    if (existing) {
-      setCart(cart.map(i => i.id === item.id ? { ...i, qty: i.qty + 1 } : i));
-    } else {
-      setCart([...cart, { ...item, qty: 1 }]);
-    }
+  // 3. ฟังก์ชันเพิ่มลงตะกร้า (ตัวอย่าง)
+  const addToCart = (food) => {
+    alert(`เพิ่ม ${food.name} ลงตะกร้าเรียบร้อยแล้ว!`);
+    // คุณสามารถเพิ่ม Logic การจัดการตะกร้า (Context/Redux) ตรงนี้ได้
   };
-
-  const placeOrder = async () => {
-    if (cart.length === 0) return;
-    const foodList = cart.map(item => `${item.name} (x${item.qty})`).join(', ');
-    
-    const { error } = await supabase.from('orders').insert([
-      { 
-        food_menu: foodList, 
-        customer_id: user.id, 
-        status: 'pending' 
-      }
-    ]);
-
-    if (!error) {
-      alert("🎉 สั่งอาหารสำเร็จ!");
-      setCart([]);
-      fetchData(user);
-    }
-  };
-
-  const cancelOrder = async (orderId, status) => {
-    if (status !== 'pending') {
-      alert("❌ ไม่สามารถยกเลิกได้ เนื่องจากร้านรับออเดอร์แล้ว");
-      return;
-    }
-    if (window.confirm("คุณต้องการยกเลิกออเดอร์นี้ใช่ไหม?")) {
-      const { error } = await supabase.from('orders').delete().eq('id', orderId);
-      if (!error) fetchData(user);
-    }
-  };
-
-  if (loading) return <div className="bg-black min-h-screen flex items-center justify-center text-orange-500 font-black">PREPARING MENU...</div>;
 
   return (
-    <div className="bg-black min-h-screen text-white font-sans pb-10">
-      {/* --- ส่วนหัว (Navbar) --- */}
-      <div className="max-w-6xl mx-auto p-6 flex justify-between items-center border-b border-gray-900 sticky top-0 bg-black/80 backdrop-blur-md z-50">
-        <h1 className="text-2xl font-black text-orange-500 italic tracking-tighter">🍔 FOODAPP PRO</h1>
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] text-gray-500 hidden sm:block">{user?.email}</span>
-          <button onClick={() => supabase.auth.signOut()} className="bg-gray-900 px-4 py-2 rounded-xl text-xs font-bold hover:text-red-500 transition-colors">Logout</button>
+    <div style={styles.container}>
+      {/* ส่วนหัวแอป */}
+      <header style={styles.header}>
+        <h1 style={styles.title}>🍔 FoodApp <span style={{color:'#ff6600'}}>Pro</span></h1>
+        <div style={styles.searchContainer}>
+          <input
+            type="text"
+            placeholder="🔍 ค้นหาเมนูอาหาร..."
+            style={styles.searchInput}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
-      </div>
+      </header>
 
-      <div className="max-w-6xl mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-3 gap-10">
-        
-        {/* --- ฝั่งซ้าย: รายการอาหาร (GRID 2-3 Columns) --- */}
-        <div className="lg:col-span-2">
-          <h2 className="text-xl font-bold mb-6 flex items-center gap-2">🔥 เมนูยอดนิยม</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
-            {menus.map((item) => (
-              <div key={item.id} className="bg-gray-900 rounded-[32px] overflow-hidden border border-gray-800 group hover:border-orange-500/50 transition-all shadow-2xl">
-                {/* 📸 จุดที่ทำให้รูปเท่ากันเป๊ะ: บังคับด้วย aspect-video และ object-cover */}
-                <div className="relative aspect-video overflow-hidden bg-gray-800">
-                  <img src={item.image_url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt={item.name} />
-                  <div className="absolute top-2 right-2 bg-black/70 px-3 py-1 rounded-full text-[10px] font-black text-orange-400 border border-orange-500/20">฿{item.price}</div>
-                </div>
-                <div className="p-4 text-center">
-                  <h3 className="font-bold text-gray-200 text-xs truncate mb-4">{item.name}</h3>
-                  <button onClick={() => addToCart(item)} className="w-full bg-white text-black py-3 rounded-2xl text-[10px] font-black hover:bg-orange-600 hover:text-white transition-all active:scale-95 shadow-lg">เพิ่มลงตะกร้า</button>
-                </div>
+      {/* สถานะโหลดข้อมูล */}
+      {loading ? (
+        <div style={styles.centerText}>กำลังโหลดเมนูอร่อย...</div>
+      ) : (
+        <div style={styles.grid}>
+          {filteredFoods.map((food) => (
+            <div key={food.id} style={styles.card}>
+              {/* ส่วนของรูปภาพ - แก้ไขให้เท่ากันทุกลูก */}
+              <div style={styles.imageWrapper}>
+                <img 
+                  src={food.image_url || 'https://via.placeholder.com'} 
+                  alt={food.name} 
+                  style={styles.image} 
+                />
               </div>
-            ))}
-          </div>
-        </div>
 
-        {/* --- ฝั่งขวา: ตะกร้า และ สถานะออเดอร์ --- */}
-        <div className="space-y-8">
-          {/* ส่วนตะกร้า */}
-          <div className="bg-gray-900 p-6 rounded-[35px] border border-gray-800 shadow-2xl">
-            <h2 className="text-lg font-bold mb-6 text-orange-500 flex justify-between">🛒 ตะกร้าของฉัน <span>{cart.length}</span></h2>
-            <div className="space-y-3 mb-6 max-h-48 overflow-y-auto pr-2">
-              {cart.map(item => (
-                <div key={item.id} className="flex justify-between items-center text-xs bg-black/40 p-3 rounded-2xl border border-gray-800">
-                  <span className="text-gray-300">{item.name} <span className="text-orange-500">x{item.qty}</span></span>
-                  <button onClick={() => setCart(cart.filter(i => i.id !== item.id))} className="text-red-500 font-black">✕</button>
-                </div>
-              ))}
-              {cart.length === 0 && <p className="text-center text-gray-600 text-xs italic py-4">ยังไม่ได้เลือกอาหารเลย...</p>}
+              {/* รายละเอียดอาหาร */}
+              <div style={styles.cardBody}>
+                <h3 style={styles.foodName}>{food.name}</h3>
+                <p style={styles.foodPrice}>฿{food.price}</p>
+                <button 
+                  onClick={() => addToCart(food)}
+                  style={styles.addButton}
+                >
+                  🛒 เพิ่มลงตะกร้า
+                </button>
+              </div>
             </div>
-            {cart.length > 0 && (
-              <button onClick={placeOrder} className="w-full bg-orange-600 text-white py-4 rounded-2xl font-black text-sm shadow-xl shadow-orange-900/20 active:scale-95 transition-all">สั่งอาหารตอนนี้</button>
-            )}
-          </div>
-
-          {/* ส่วนสถานะออเดอร์ (ยกเลิกได้) */}
-          <div className="bg-gray-900 p-6 rounded-[35px] border border-gray-800 shadow-2xl">
-            <h2 className="text-lg font-bold mb-6 text-gray-400">📄 ติดตามสถานะ</h2>
-            <div className="space-y-4">
-              {myOrders.map(order => (
-                <div key={order.id} className="p-4 bg-black/60 rounded-2xl border border-gray-800">
-                  <p className="text-[10px] text-gray-200 font-bold mb-2 truncate">{order.food_menu}</p>
-                  <div className="flex justify-between items-center">
-                    <span className={`text-[9px] px-3 py-1 rounded-full font-black uppercase ${
-                      order.status === 'pending' ? 'bg-yellow-900/30 text-yellow-500 border border-yellow-500/20' : 'bg-green-900/30 text-green-500 border border-green-500/20'
-                    }`}>
-                      {order.status === 'pending' ? 'รอรับงาน' : 'รับงานแล้ว'}
-                    </span>
-                    {order.status === 'pending' && (
-                      <button onClick={() => cancelOrder(order.id, order.status)} className="text-[9px] text-red-500 underline font-bold">ยกเลิกรายการ</button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {myOrders.length === 0 && <p className="text-center text-gray-600 text-xs italic py-4">ไม่มีประวัติการสั่งซื้อ</p>}
-            </div>
-          </div>
+          ))}
         </div>
+      )}
 
-      </div>
+      {/* ถ้าไม่พบเมนูที่ค้นหา */}
+      {!loading && filteredFoods.length === 0 && (
+        <div style={styles.centerText}>ไม่พบเมนูที่คุณค้นหา...</div>
+      )}
     </div>
   );
-}
+};
+
+// --- Styles: Dark Theme & Uniform Design ---
+const styles = {
+  container: {
+    backgroundColor: '#000000', // พื้นหลังดำสนิท
+    color: '#ffffff',
+    minHeight: '100vh',
+    padding: '20px',
+    fontFamily: "'Kanit', sans-serif",
+  },
+  header: {
+    textAlign: 'center',
+    marginBottom: '30px',
+  },
+  title: {
+    fontSize: '2.5rem',
+    marginBottom: '20px',
+  },
+  searchContainer: {
+    maxWidth: '500px',
+    margin: '0 auto',
+  },
+  searchInput: {
+    width: '100%',
+    padding: '12px 20px',
+    borderRadius: '25px',
+    border: '1px solid #333',
+    backgroundColor: '#1a1a1a',
+    color: 'white',
+    fontSize: '16px',
+    outline: 'none',
+  },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+    gap: '25px',
+    padding: '10px',
+  },
+  card: {
+    backgroundColor: '#1a1a1a', // การ์ดสีเทาเข้ม
+    borderRadius: '15px',
+    overflow: 'hidden',
+    boxShadow: '0 8px 20px rgba(0,0,0,0.5)',
+    border: '1px solid #222',
+    transition: 'transform 0.2s',
+  },
+  imageWrapper: {
+    width: '100%',
+    height: '200px', // บังคับความสูงรูปภาพให้เท่ากันเป๊ะ
+    overflow: 'hidden',
+    backgroundColor: '#333',
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover', // สำคัญ: ปรับรูปภาพให้พอดีกล่องโดยไม่เบี้ยว
+  },
+  cardBody: {
+    padding: '20px',
+    textAlign: 'center',
+  },
+  foodName: {
+    fontSize: '1.2rem',
+    margin: '0 0 10px 0',
+    color: '#fff',
+  },
+  foodPrice: {
+    fontSize: '1.3rem',
+    color: '#ff6600', // สีส้มเน้นราคา
+    fontWeight: 'bold',
+    marginBottom: '15px',
+  },
+  addButton: {
+    width: '100%',
+    padding: '12px',
+    backgroundColor: '#ff6600',
+    color: 'white',
+    border: 'none',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+    fontSize: '16px',
+    transition: '0.3s',
+  },
+  centerText: {
+    textAlign: 'center',
+    marginTop: '50px',
+    color: '#888',
+  },
+};
+
+export default OrderFood;
