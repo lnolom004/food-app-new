@@ -1,86 +1,78 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from './supabase';
+import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'; // ลบ BrowserRouter ออกจากบรรทัดนี้
+import { supabase } from './supabase'; 
 
-const Chat = () => {
-  const { orderId } = useParams();
-  const navigate = useNavigate();
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [myId, setMyId] = useState(null);
-  const scrollRef = useRef();
+import OrderFood from './orderFood'; 
+import Login from './Login';      
+import Register from './Register'; 
+import RiderDashboard from './rider'; 
+import AdminDashboard from './admin'; 
+import Chat from './chat'; 
 
-  useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) setMyId(user.id);
+const ProtectedRoute = ({ children, user }) => {
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+};
 
-      const { data } = await supabase.from('messages').select('*').eq('order_id', orderId).order('created_at');
-      setMessages(data || []);
+function App() {
+  const [user, setUser] = useState(null);
+  const [userData, setUserData] = useState(null); 
+  const [loading, setLoading] = useState(true);
 
-      const channel = supabase.channel(`chat-${orderId}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `order_id=eq.${orderId}` }, 
-        payload => setMessages(prev => [...prev, payload.new]))
-        .subscribe();
-      return () => supabase.removeChannel(channel);
-    };
-    init();
-  }, [orderId]);
-
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-  const sendMessage = async (e) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
-    const { error } = await supabase.from('messages').insert([{ order_id: orderId, sender_id: myId, content: newMessage }]);
-    if (!error) setNewMessage('');
+  const fetchUserInfo = async (userId) => {
+    try {
+      const { data } = await supabase.from('users').select('role, is_approved').eq('id', userId).maybeSingle();
+      setUserData(data);
+    } catch (err) {
+      setUserData(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  useEffect(() => {
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setUser(session.user);
+        await fetchUserInfo(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    };
+    initAuth();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session) {
+        setUser(session.user);
+        await fetchUserInfo(session.user.id);
+      } else {
+        setUser(null);
+        setUserData(null);
+        setLoading(false);
+      }
+    });
+    return () => authListener.subscription.unsubscribe();
+  }, []);
+
+  if (loading) return <div className="bg-black min-h-screen flex items-center justify-center text-orange-500">LOADING...</div>;
+
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <button onClick={() => navigate(-1)} style={styles.backBtn}>⬅️ กลับ</button>
-        <div style={{ flex: 1, textAlign: 'center' }}>
-          <h3 style={{ margin: 0 }}>💬 ห้องแชท</h3>
-        </div>
-      </header>
-
-      <div style={styles.chatArea}>
-        {messages.map(m => (
-          <div key={m.id} style={{ ...styles.bubble, alignSelf: m.sender_id === myId ? 'flex-end' : 'flex-start', backgroundColor: m.sender_id === myId ? '#ff6600' : '#333' }}>
-            {m.content}
-          </div>
-        ))}
-        <div ref={scrollRef} />
-      </div>
-
-      {/* --- ส่วนช่องพิมพ์ที่แก้ใหม่ --- */}
-      <div style={styles.footer}>
-        <form onSubmit={sendMessage} style={styles.form}>
-          <input 
-            type="text" 
-            value={newMessage} 
-            onChange={(e) => setNewMessage(e.target.value)} 
-            placeholder="พิมพ์ข้อความ..." 
-            style={styles.input}
-          />
-          <button type="submit" style={styles.sendBtn}>ส่ง</button>
-        </form>
-      </div>
-    </div>
+    // ✅ สังเกตตรงนี้: ไม่มีคำว่า <Router> แล้ว เริ่มที่ <Routes> ได้เลย
+    <Routes>
+      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register />} />
+      <Route path="/order" element={<ProtectedRoute user={user}><OrderFood /></ProtectedRoute>} />
+      <Route path="/rider" element={<ProtectedRoute user={user}><RiderDashboard /></ProtectedRoute>} />
+      <Route path="/chat/:orderId" element={<ProtectedRoute user={user}><Chat /></ProtectedRoute>} />
+      <Route path="/admin" element={<ProtectedRoute user={user}><AdminDashboard /></ProtectedRoute>} />
+      <Route path="/" element={
+        user ? (
+          userData?.role === 'rider' ? <Navigate to="/rider" replace /> : <Navigate to="/order" replace />
+        ) : <Navigate to="/login" replace />
+      } />
+    </Routes>
   );
-};
+}
 
-const styles = {
-  container: { backgroundColor: '#000', height: '100vh', display: 'flex', flexDirection: 'column', color: '#fff', fontFamily: 'Kanit' },
-  header: { padding: '15px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center' },
-  backBtn: { color: '#fff', background: 'none', border: 'none', cursor: 'pointer' },
-  chatArea: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' },
-  bubble: { maxWidth: '70%', padding: '10px 15px', borderRadius: '15px', fontSize: '14px' },
-  footer: { padding: '15px', backgroundColor: '#111', borderTop: '1px solid #222' },
-  form: { display: 'flex', gap: '10px', width: '100%' },
-  input: { flex: 1, padding: '12px', borderRadius: '25px', border: '1px solid #333', backgroundColor: '#222', color: '#fff', outline: 'none' },
-  sendBtn: { padding: '10px 25px', backgroundColor: '#ff6600', color: '#fff', border: 'none', borderRadius: '25px', fontWeight: 'bold' }
-};
-
-export default Chat;
+export default App;
