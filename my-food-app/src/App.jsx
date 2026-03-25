@@ -1,156 +1,92 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { supabase } from './supabase'; 
+  return (
+    <div style={styles.container}>
+      {/* ส่วนหัว */}
+      <header style={styles.header}>
+        <button onClick={() => navigate(-1)} style={styles.backBtn}>⬅️ กลับ</button>
+        <div style={{ flex: 1, textAlign: 'center' }}>
+          <h3 style={{ margin: 0, color: '#ff6600' }}>💬 ห้องแชทติดต่อ</h3>
+          <small style={{ color: '#888' }}>ออเดอร์: #{orderId?.slice(0, 8)}</small>
+        </div>
+      </header>
 
-// --- นำเข้าไฟล์หน้าต่างๆ (ตรวจสอบตัวพิมพ์เล็ก-ใหญ่ให้ตรงกับชื่อไฟล์จริง) ---
-import OrderFood from './orderFood'; 
-import Login from './Login';      
-import Register from './Register'; 
-import RiderDashboard from './rider'; 
-import AdminDashboard from './admin'; 
-import Chat from './chat'; 
+      {/* ส่วนแสดงข้อความ */}
+      <div style={styles.chatArea}>
+        {messages.map((msg) => {
+          const isMe = msg.sender_id === myInfo.id;
+          return (
+            <div key={msg.id} style={{ ...styles.bubbleWrapper, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+              <div style={{ ...styles.bubble, backgroundColor: isMe ? '#ff6600' : '#2a2a2a' }}>
+                {msg.content}
+                <div style={styles.time}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={scrollRef} />
+      </div>
 
-// 1. ฟังก์ชันกั้นหน้า (Protected Route)
-const ProtectedRoute = ({ children, user }) => {
-  if (!user) return <Navigate to="/login" replace />;
-  return children;
-};
-
-function App() {
-  const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null); 
-  const [loading, setLoading] = useState(true);
-
-  // 2. ฟังก์ชันดึงข้อมูลผู้ใช้ (ปรับปรุงให้ไม่ค้าง)
-  const fetchUserInfo = async (userId) => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('role, is_approved')
-        .eq('id', userId)
-        .maybeSingle(); // ใช้ maybeSingle แทน single เพื่อไม่ให้ Error หากหาข้อมูลไม่เจอ
-      
-      if (error) throw error;
-      setUserData(data);
-    } catch (err) {
-      console.error("Auth Error:", err.message);
-      setUserData(null);
-    } finally {
-      // **จุดสำคัญที่สุด: ต้องสั่งปิด Loading ไม่ว่าจะดึงข้อมูลสำเร็จหรือไม่**
-      setLoading(false); 
-    }
-  };
-
-  useEffect(() => {
-    // ตรวจสอบเซสชันเริ่มต้น
-    const initAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          setUser(session.user);
-          await fetchUserInfo(session.user.id);
-        } else {
-          setLoading(false); // ถ้าไม่มีคนล็อกอิน ให้เข้าหน้า Login ได้เลย
-        }
-      } catch (err) {
-        setLoading(false);
-      }
-    };
-
-    initAuth();
-
-    // ฟังการเปลี่ยนแปลงสถานะ (Login / Logout)
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session) {
-        setUser(session.user);
-        await fetchUserInfo(session.user.id);
-      } else {
-        setUser(null);
-        setUserData(null);
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      if (authListener) authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  // หน้า Loading ระหว่างรอฐานข้อมูล (ดีไซน์ Dark Mode)
-  if (loading) return (
-    <div style={{ backgroundColor: '#000', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: '#ff6600', fontWeight: 'bold', fontSize: '20px', textAlign: 'center' }}>
-        <div style={{ fontSize: '40px', marginBottom: '15px' }}>🍔</div>
-        <div className="animate-pulse" style={{ letterSpacing: '2px' }}>FOODAPP PRO LOADING...</div>
+      {/* --- ส่วนที่แก้ไข: ล็อคขนาดช่องพิมพ์ --- */}
+      <div style={styles.inputOuterContainer}>
+        <form onSubmit={handleSendMessage} style={styles.inputForm}>
+          <input 
+            type="text" 
+            placeholder="พิมพ์ข้อความที่นี่..." 
+            style={styles.textInput}
+            value={newMessage}
+            onChange={(e) => setNewMessage(e.target.value)}
+            autoComplete="off"
+          />
+          <button type="submit" style={styles.submitBtn}>ส่ง</button>
+        </form>
       </div>
     </div>
   );
+};
 
-  return (
-    <Router>
-      <Routes>
-        {/* --- ส่วนของ Login & Register --- */}
-        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-        <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register />} />
+const styles = {
+  container: { backgroundColor: '#000', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: "'Kanit', sans-serif" },
+  header: { padding: '15px', backgroundColor: '#111', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', color: '#fff' },
+  backBtn: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: '10px' },
+  chatArea: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' },
+  bubbleWrapper: { display: 'flex', width: '100%' },
+  bubble: { maxWidth: '75%', padding: '12px 16px', borderRadius: '15px', color: '#fff', fontSize: '15px' },
+  time: { fontSize: '10px', opacity: 0.5, textAlign: 'right', marginTop: '4px' },
+  loading: { backgroundColor: '#000', color: '#ff6600', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' },
 
-        {/* --- หน้าสั่งอาหาร (Customer) --- */}
-        <Route path="/order" element={
-          <ProtectedRoute user={user}>
-            <OrderFood />
-          </ProtectedRoute>
-        } />
+  // *** ส่วนที่ปรับปรุงใหม่เพื่อความชัวร์ ***
+  inputOuterContainer: {
+    padding: '15px',
+    backgroundColor: '#111',
+    borderTop: '1px solid #222'
+  },
+  inputForm: {
+    display: 'flex',
+    width: '100%',
+    alignItems: 'center',
+    gap: '10px'
+  },
+  textInput: {
+    flex: '1',               // บังคับให้ช่องพิมพ์ขยายเต็มพื้นที่ที่เหลือ
+    height: '45px',
+    padding: '0 20px',
+    borderRadius: '25px',
+    border: '1px solid #333',
+    backgroundColor: '#222',
+    color: '#fff',
+    outline: 'none',
+    fontSize: '15px'
+  },
+  submitBtn: {
+    width: '80px',           // ล็อคความกว้างปุ่มไม่ให้ยาวเกินไป
+    height: '45px',
+    backgroundColor: '#ff6600',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '25px',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    flexShrink: 0            // ห้ามปุ่มหดตัว
+  }
+};
 
-        {/* --- หน้าไรเดอร์ (Rider) + ระบบเช็คการอนุมัติ --- */}
-        <Route path="/rider" element={
-          <ProtectedRoute user={user}>
-            {userData?.role === 'rider' && !userData.is_approved ? (
-              <div style={{ backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', textAlign: 'center', padding: '20px' }}>
-                <span style={{ fontSize: '60px' }}>🛵</span>
-                <h2 style={{ color: '#ff6600', fontSize: '28px', marginTop: '20px', fontWeight: '900' }}>รอการยืนยันบัญชี</h2>
-                <p style={{ color: '#888', marginTop: '10px' }}>แอดมินกำลังตรวจสอบข้อมูลไรเดอร์ของคุณอยู่ครับ</p>
-                <button 
-                  onClick={() => supabase.auth.signOut()} 
-                  style={{ marginTop: '30px', background: 'none', border: 'none', color: '#666', textDecoration: 'underline', cursor: 'pointer' }}
-                >
-                  ออกจากระบบ
-                </button>
-              </div>
-            ) : (
-              <RiderDashboard />
-            )}
-          </ProtectedRoute>
-        } />
-
-        {/* --- หน้าแอดมิน (Admin) --- */}
-        <Route path="/admin" element={
-          <ProtectedRoute user={user}>
-            <AdminDashboard />
-          </ProtectedRoute>
-        } />
-
-        {/* --- หน้าแชท (Chat) รองรับ orderId --- */}
-        <Route path="/chat/:orderId" element={
-          <ProtectedRoute user={user}>
-            <Chat />
-          </ProtectedRoute>
-        } />
-
-        {/* --- การจัดเส้นทางหน้าแรก (Auto Redirect ตาม Role) --- */}
-        <Route path="/" element={
-          user ? (
-            userData?.role === 'rider' ? <Navigate to="/rider" replace /> :
-            userData?.role === 'admin' ? <Navigate to="/admin" replace /> :
-            <Navigate to="/order" replace />
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        } />
-
-        {/* กันเหนียว: พิมพ์มั่วให้กลับหน้าแรก */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Router>
-  );
-}
-
-export default App;
+export default Chat;
