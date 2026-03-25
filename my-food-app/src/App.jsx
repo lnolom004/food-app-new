@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { supabase } from './supabase'; // s ตัวเล็ก ตามโครงสร้างไฟล์คุณ
+import { supabase } from './supabase'; 
 
-// --- ส่วนการนำเข้าไฟล์หน้าต่างๆ (Case Sensitive ตรงตามโฟลเดอร์คุณเป๊ะ) ---
-import OrderFood from './orderFood'; // o ตัวเล็ก
-import Login from './Login';      // L ตัวใหญ่
-import Register from './Register'; // R ตัวใหญ่
-import RiderDashboard from './rider'; // r ตัวเล็ก
-import AdminDashboard from './admin'; // a ตัวเล็ก
+// --- การนำเข้าไฟล์หน้าต่างๆ (Case Sensitive ตามโครงสร้างโฟลเดอร์ของคุณ) ---
+import OrderFood from './orderFood'; 
+import Login from './Login';      
+import Register from './Register'; 
+import RiderDashboard from './rider'; 
+import AdminDashboard from './admin'; 
+import Chat from './chat'; // เพิ่มหน้าแชท
 
 // ============================================================
 // 1. ฟังก์ชันกั้นหน้า (Protected Route)
-// ทำหน้าที่: ถ้ายังไม่ล็อกอิน จะดีดกลับไปหน้า Login ทันที
 // ============================================================
 const ProtectedRoute = ({ children, user }) => {
   if (!user) return <Navigate to="/login" replace />;
@@ -20,16 +20,31 @@ const ProtectedRoute = ({ children, user }) => {
 
 function App() {
   const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null); // เก็บข้อมูล role และ is_approved
+  const [userData, setUserData] = useState(null); 
   const [loading, setLoading] = useState(true);
 
   // ============================================================
-  // 2. ฟังก์ชันตรวจสอบสถานะผู้ใช้ (Auth Observer)
-  // ทำหน้าที่: เช็คว่าใครล็อกอินอยู่ และมีสิทธิ์ระดับไหน (Customer/Rider/Admin)
+  // 2. ฟังก์ชันตรวจสอบสถานะผู้ใช้และดึงข้อมูล Role
   // ============================================================
+  const fetchUserInfo = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('role, is_approved')
+        .eq('id', userId)
+        .single();
+      
+      if (!error) {
+        setUserData(data);
+      }
+    } catch (err) {
+      console.error("Error fetching user info:", err);
+    }
+  };
+
   useEffect(() => {
-    // เช็คเซสชันตอนเปิดแอปครั้งแรก
-    const checkUser = async () => {
+    // เช็คเซสชันตอนเปิดแอป
+    const initAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         setUser(session.user);
@@ -38,67 +53,62 @@ function App() {
       setLoading(false);
     };
 
-    checkUser();
+    initAuth();
 
     // ฟังการเปลี่ยนแปลงสถานะ (Login / Logout)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
+      if (session) {
         setUser(session.user);
         await fetchUserInfo(session.user.id);
-      } else if (event === 'SIGNED_OUT') {
+      } else {
         setUser(null);
         setUserData(null);
       }
+      setLoading(false);
     });
 
-    return () => authListener.subscription.unsubscribe();
+    return () => {
+      if (authListener) authListener.subscription.unsubscribe();
+    };
   }, []);
 
-  // ฟังก์ชันดึงข้อมูล role จากตาราง users (ที่เราสร้างไว้ใน Database)
-  const fetchUserInfo = async (userId) => {
-    const { data } = await supabase
-      .from('users')
-      .select('role, is_approved')
-      .eq('id', userId)
-      .single();
-    setUserData(data);
-  };
-
-  // แสดงหน้า Loading ขณะตรวจสอบข้อมูล
+  // หน้า Loading ระหว่างรอฐานข้อมูล
   if (loading) return (
-    <div className="bg-black min-h-screen flex items-center justify-center text-orange-500 font-black tracking-widest animate-pulse">
-      SYSTEM LOADING...
+    <div style={{ backgroundColor: '#000', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: '#ff6600', fontWeight: 'bold', fontSize: '24px', letterSpacing: '2px' }} className="animate-pulse">
+        FOODAPP PRO LOADING...
+      </div>
     </div>
   );
 
   return (
     <Router>
       <Routes>
-        {/* ============================================================
-            3. การจัดการเส้นทาง (Routing Logic)
-        ============================================================ */}
+        {/* --- ส่วนของ Login & Register --- */}
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register />} />
 
-        {/* หน้า Login & Register: ถ้าล็อกอินแล้ว ให้ดีดไปหน้าสั่งอาหารทันที */}
-        <Route path="/login" element={user ? <Navigate to="/order" /> : <Login />} />
-        <Route path="/register" element={user ? <Navigate to="/order" /> : <Register />} />
-
-        {/* หน้าสั่งอาหาร: ต้องล็อกอินก่อน (ProtectedRoute) */}
+        {/* --- หน้าสั่งอาหาร (Customer) --- */}
         <Route path="/order" element={
           <ProtectedRoute user={user}>
             <OrderFood />
           </ProtectedRoute>
         } />
 
-        {/* หน้าไรเดอร์: ต้องล็อกอิน และมีการเช็คสถานะการอนุมัติ (is_approved) */}
+        {/* --- หน้าไรเดอร์ (Rider) พร้อมระบบเช็คการอนุมัติ --- */}
         <Route path="/rider" element={
           <ProtectedRoute user={user}>
-            {/* ถ้าเป็นไรเดอร์แต่ยังไม่อนุมัติ ให้แสดงข้อความเตือน (หรือสร้างหน้า WaitingPage แยก) */}
             {userData?.role === 'rider' && !userData.is_approved ? (
-              <div className="bg-black min-h-screen flex flex-col items-center justify-center p-8 text-center">
-                <h1 className="text-4xl mb-4">🛵</h1>
-                <h2 className="text-orange-500 text-2xl font-black mb-2">รอการยืนยันบัญชี</h2>
-                <p className="text-gray-500">แอดมินกำลังตรวจสอบข้อมูลของคุณ โปรดเข้าตรวจสอบอีกครั้งภายหลังครับ</p>
-                <button onClick={() => supabase.auth.signOut()} className="mt-8 text-gray-700 underline">ออกจากระบบ</button>
+              <div style={{ backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', textAlign: 'center', padding: '20px' }}>
+                <span style={{ fontSize: '60px' }}>🛵</span>
+                <h2 style={{ color: '#ff6600', fontSize: '28px', marginTop: '20px' }}>รอการยืนยันบัญชี</h2>
+                <p style={{ color: '#888', marginTop: '10px' }}>แอดมินกำลังตรวจสอบข้อมูลไรเดอร์ของคุณอยู่ครับ...</p>
+                <button 
+                  onClick={() => supabase.auth.signOut()} 
+                  style={{ marginTop: '30px', background: 'none', border: 'none', color: '#666', textDecoration: 'underline', cursor: 'pointer' }}
+                >
+                  ออกจากระบบ
+                </button>
               </div>
             ) : (
               <RiderDashboard />
@@ -106,19 +116,31 @@ function App() {
           </ProtectedRoute>
         } />
 
-        {/* หน้าแอดมิน: ต้องล็อกอิน (ในอนาคตควรเช็ค role === 'admin' เพิ่ม) */}
+        {/* --- หน้าแชท (Chat) เพิ่มใหม่ รองรับพารามิเตอร์ orderId --- */}
+        <Route path="/chat/:orderId" element={
+          <ProtectedRoute user={user}>
+            <Chat />
+          </ProtectedRoute>
+        } />
+
+        {/* --- หน้าแอดมิน (Admin) --- */}
         <Route path="/admin" element={
           <ProtectedRoute user={user}>
             <AdminDashboard />
           </ProtectedRoute>
         } />
 
-        {/* หน้าแรกสุด: ถ้าล็อกอินแล้วไปหน้าสั่งอาหาร ถ้ายังไม่ไปหน้า Login */}
-        <Route path="/" element={<Navigate to={user ? "/order" : "/login"} />} />
-        
-        {/* กันเหนียว: ถ้าพิมพ์ URL มั่ว ระบบจะส่งกลับไปหน้าแรก */}
-        <Route path="*" element={<Navigate to="/" />} />
+        {/* --- หน้าหลัก (Home Logic) --- */}
+        <Route path="/" element={
+          user ? (
+            userData?.role === 'rider' ? <Navigate to="/rider" replace /> : <Navigate to="/order" replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        } />
 
+        {/* Catch-all: ถ้าพิมพ์ผิดให้กลับไปหน้าแรก */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );
