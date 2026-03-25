@@ -98,6 +98,10 @@ const OrderFood = () => {
       await supabase.from('orders').delete().eq('id', orderId).eq('status', 'pending');
       fetchMyOrders();
     }
+  };  // เพิ่มบรรทัดที่ 101 เป็นต้นไป
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/login');
   };
 
   // ฟิลเตอร์ค้นหาและหมวดหมู่
@@ -109,9 +113,21 @@ const OrderFood = () => {
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={{fontSize: '2.5rem', color: '#ff6600'}}>🍔 FoodApp Pro</h1>
-        <input type="text" placeholder="🔍 ค้นหาเมนูอาหาร..." style={styles.searchInput} onChange={(e)=>setSearchTerm(e.target.value)} />
-      </header>
+  {/* บรรทัดที่ 116: สร้างกลุ่มชื่อแอปและปุ่มให้อยู่ซ้าย-ขวา */}
+  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '15px' }}>
+    <h1 style={{ fontSize: '2.5rem', color: '#ff6600', margin: 0 }}>🍔 FoodApp Pro</h1>
+    <button onClick={handleLogout} style={styles.logoutBtn}>ออกจากระบบ</button>
+  </div>
+
+  {/* บรรทัดที่ 117: ช่องค้นหาเมนู */}
+  <input 
+    type="text" 
+    placeholder="🔍 ค้นหาเมนูอาหาร..." 
+    style={styles.searchInput} 
+    onChange={(e) => setSearchTerm(e.target.value)} 
+  />
+</header>
+
 
       {/* หมวดหมู่ */}
       <div style={styles.categoryBar}>
