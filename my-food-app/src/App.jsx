@@ -2,17 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './supabase'; 
 
-// --- การนำเข้าไฟล์หน้าต่างๆ (Case Sensitive ตามโครงสร้างโฟลเดอร์ของคุณ) ---
+// --- นำเข้าไฟล์หน้าต่างๆ (ตรวจสอบตัวพิมพ์เล็ก-ใหญ่ให้ตรงกับชื่อไฟล์จริง) ---
 import OrderFood from './orderFood'; 
 import Login from './Login';      
 import Register from './Register'; 
 import RiderDashboard from './rider'; 
 import AdminDashboard from './admin'; 
-import Chat from './chat'; // เพิ่มหน้าแชท
+import Chat from './chat'; 
 
-// ============================================================
 // 1. ฟังก์ชันกั้นหน้า (Protected Route)
-// ============================================================
 const ProtectedRoute = ({ children, user }) => {
   if (!user) return <Navigate to="/login" replace />;
   return children;
@@ -23,34 +21,40 @@ function App() {
   const [userData, setUserData] = useState(null); 
   const [loading, setLoading] = useState(true);
 
-  // ============================================================
-  // 2. ฟังก์ชันตรวจสอบสถานะผู้ใช้และดึงข้อมูล Role
-  // ============================================================
+  // 2. ฟังก์ชันดึงข้อมูลผู้ใช้ (ปรับปรุงให้ไม่ค้าง)
   const fetchUserInfo = async (userId) => {
     try {
       const { data, error } = await supabase
         .from('users')
         .select('role, is_approved')
         .eq('id', userId)
-        .single();
+        .maybeSingle(); // ใช้ maybeSingle แทน single เพื่อไม่ให้ Error หากหาข้อมูลไม่เจอ
       
-      if (!error) {
-        setUserData(data);
-      }
+      if (error) throw error;
+      setUserData(data);
     } catch (err) {
-      console.error("Error fetching user info:", err);
+      console.error("Auth Error:", err.message);
+      setUserData(null);
+    } finally {
+      // **จุดสำคัญที่สุด: ต้องสั่งปิด Loading ไม่ว่าจะดึงข้อมูลสำเร็จหรือไม่**
+      setLoading(false); 
     }
   };
 
   useEffect(() => {
-    // เช็คเซสชันตอนเปิดแอป
+    // ตรวจสอบเซสชันเริ่มต้น
     const initAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        setUser(session.user);
-        await fetchUserInfo(session.user.id);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          setUser(session.user);
+          await fetchUserInfo(session.user.id);
+        } else {
+          setLoading(false); // ถ้าไม่มีคนล็อกอิน ให้เข้าหน้า Login ได้เลย
+        }
+      } catch (err) {
+        setLoading(false);
       }
-      setLoading(false);
     };
 
     initAuth();
@@ -63,8 +67,8 @@ function App() {
       } else {
         setUser(null);
         setUserData(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => {
@@ -72,11 +76,12 @@ function App() {
     };
   }, []);
 
-  // หน้า Loading ระหว่างรอฐานข้อมูล
+  // หน้า Loading ระหว่างรอฐานข้อมูล (ดีไซน์ Dark Mode)
   if (loading) return (
     <div style={{ backgroundColor: '#000', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: '#ff6600', fontWeight: 'bold', fontSize: '24px', letterSpacing: '2px' }} className="animate-pulse">
-        FOODAPP PRO LOADING...
+      <div style={{ color: '#ff6600', fontWeight: 'bold', fontSize: '20px', textAlign: 'center' }}>
+        <div style={{ fontSize: '40px', marginBottom: '15px' }}>🍔</div>
+        <div className="animate-pulse" style={{ letterSpacing: '2px' }}>FOODAPP PRO LOADING...</div>
       </div>
     </div>
   );
@@ -95,14 +100,14 @@ function App() {
           </ProtectedRoute>
         } />
 
-        {/* --- หน้าไรเดอร์ (Rider) พร้อมระบบเช็คการอนุมัติ --- */}
+        {/* --- หน้าไรเดอร์ (Rider) + ระบบเช็คการอนุมัติ --- */}
         <Route path="/rider" element={
           <ProtectedRoute user={user}>
             {userData?.role === 'rider' && !userData.is_approved ? (
               <div style={{ backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', textAlign: 'center', padding: '20px' }}>
                 <span style={{ fontSize: '60px' }}>🛵</span>
-                <h2 style={{ color: '#ff6600', fontSize: '28px', marginTop: '20px' }}>รอการยืนยันบัญชี</h2>
-                <p style={{ color: '#888', marginTop: '10px' }}>แอดมินกำลังตรวจสอบข้อมูลไรเดอร์ของคุณอยู่ครับ...</p>
+                <h2 style={{ color: '#ff6600', fontSize: '28px', marginTop: '20px', fontWeight: '900' }}>รอการยืนยันบัญชี</h2>
+                <p style={{ color: '#888', marginTop: '10px' }}>แอดมินกำลังตรวจสอบข้อมูลไรเดอร์ของคุณอยู่ครับ</p>
                 <button 
                   onClick={() => supabase.auth.signOut()} 
                   style={{ marginTop: '30px', background: 'none', border: 'none', color: '#666', textDecoration: 'underline', cursor: 'pointer' }}
@@ -116,13 +121,6 @@ function App() {
           </ProtectedRoute>
         } />
 
-        {/* --- หน้าแชท (Chat) เพิ่มใหม่ รองรับพารามิเตอร์ orderId --- */}
-        <Route path="/chat/:orderId" element={
-          <ProtectedRoute user={user}>
-            <Chat />
-          </ProtectedRoute>
-        } />
-
         {/* --- หน้าแอดมิน (Admin) --- */}
         <Route path="/admin" element={
           <ProtectedRoute user={user}>
@@ -130,16 +128,25 @@ function App() {
           </ProtectedRoute>
         } />
 
-        {/* --- หน้าหลัก (Home Logic) --- */}
+        {/* --- หน้าแชท (Chat) รองรับ orderId --- */}
+        <Route path="/chat/:orderId" element={
+          <ProtectedRoute user={user}>
+            <Chat />
+          </ProtectedRoute>
+        } />
+
+        {/* --- การจัดเส้นทางหน้าแรก (Auto Redirect ตาม Role) --- */}
         <Route path="/" element={
           user ? (
-            userData?.role === 'rider' ? <Navigate to="/rider" replace /> : <Navigate to="/order" replace />
+            userData?.role === 'rider' ? <Navigate to="/rider" replace /> :
+            userData?.role === 'admin' ? <Navigate to="/admin" replace /> :
+            <Navigate to="/order" replace />
           ) : (
             <Navigate to="/login" replace />
           )
         } />
 
-        {/* Catch-all: ถ้าพิมพ์ผิดให้กลับไปหน้าแรก */}
+        {/* กันเหนียว: พิมพ์มั่วให้กลับหน้าแรก */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
