@@ -9,15 +9,16 @@ import Register from './Register';
 import RiderDashboard from './rider';
 import AdminDashboard from './admin';
 import Chat from './chat';
+import Review from './Review'; // ✅ เพิ่มการนำเข้าหน้า Review
 
 // ============================================================
-// 1. ระบบกั้นหน้าอัจฉริยะ (Enhanced Protected Route)
+// 1. ระบบกั้นหน้าอัจฉริยะ (Protected Route) 
 // ============================================================
 const ProtectedRoute = ({ children, user, userData, allowedRole }) => {
-  // ถ้ายังไม่ได้ Login ให้ไปหน้า Login
+  // ถ้ายังไม่ได้ Login ให้ส่งไปหน้า Login
   if (!user) return <Navigate to="/login" replace />;
 
-  // ถ้าเป็นหน้าเฉพาะทาง (Admin/Rider) แต่ Role ไม่ตรง ให้ดีดกลับหน้าแรกของเขา
+  // ถ้าเป็นหน้าเฉพาะทาง (เช่น Admin) แต่ Role ไม่ตรง ให้เด้งกลับหน้าแรก
   if (allowedRole && userData && userData.role !== allowedRole) {
     return <Navigate to="/" replace />;
   }
@@ -31,7 +32,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   // ============================================================
-  // 2. ฟังก์ชันดึงข้อมูล Profile (Memoized เพื่อประสิทธิภาพ)
+  // 2. ฟังก์ชันดึงข้อมูลผู้ใช้ (เช็ค Role และ การอนุมัติ)
   // ============================================================
   const fetchUserInfo = useCallback(async (userId) => {
     try {
@@ -52,10 +53,9 @@ function App() {
   }, []);
 
   // ============================================================
-  // 3. ระบบติดตามสถานะผู้ใช้ (Single Source of Truth)
+  // 3. ติดตามสถานะการเข้าสู่ระบบ (Auth Observer)
   // ============================================================
   useEffect(() => {
-    // เช็ค Session ปัจจุบัน
     const initialize = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
@@ -68,7 +68,6 @@ function App() {
 
     initialize();
 
-    // ฟังการเปลี่ยนแปลงสถานะ (Login / Logout / Token Expired)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         setUser(session.user);
@@ -83,39 +82,35 @@ function App() {
     return () => authListener.subscription.unsubscribe();
   }, [fetchUserInfo]);
 
-  // ============================================================
-  // 4. ส่วนการแสดงผล Loading (Dark Mode UI)
-  // ============================================================
+  // หน้าจอรอโหลดระบบ
   if (loading) return (
     <div style={styles.loaderContainer}>
-      <div style={styles.loaderText} className="animate-pulse">
-        🍔 FOODAPP PRO <span style={{ color: '#fff' }}>SYSTEM</span>
-      </div>
-      <small style={{ color: '#444', marginTop: '10px' }}>กำลังตรวจสอบสิทธิ์การเข้าถึง...</small>
+      <div style={styles.loaderText}>🍔 FOODAPP PRO SYSTEM</div>
+      <div style={{ color: '#444', marginTop: '10px', fontSize: '12px' }}>กำลังยืนยันตัวตน...</div>
     </div>
   );
 
   return (
     <Routes>
-      {/* --- เส้นทางสาธารณะ (Public) --- */}
+      {/* --- ส่วนบุคคลทั่วไป --- */}
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register />} />
 
-      {/* --- หน้าสั่งอาหาร (Customer Only) --- */}
+      {/* --- ส่วนลูกค้า (Customer) --- */}
       <Route path="/order" element={
         <ProtectedRoute user={user} userData={userData} allowedRole="customer">
           <OrderFood />
         </ProtectedRoute>
       } />
 
-      {/* --- หน้าแอดมิน (Admin Only) --- */}
-      <Route path="/admin" element={
-        <ProtectedRoute user={user} userData={userData} allowedRole="admin">
-          <AdminDashboard />
+      {/* ✅ หน้าใหม่: รีวิวออเดอร์ (เฉพาะลูกค้า) */}
+      <Route path="/review/:orderId" element={
+        <ProtectedRoute user={user} userData={userData} allowedRole="customer">
+          <Review />
         </ProtectedRoute>
       } />
 
-      {/* --- หน้าไรเดอร์ (Rider Only + ระบบอนุมัติ) --- */}
+      {/* --- ส่วนไรเดอร์ (Rider) --- */}
       <Route path="/rider" element={
         <ProtectedRoute user={user} userData={userData} allowedRole="rider">
           {userData?.is_approved ? (
@@ -124,21 +119,28 @@ function App() {
             <div style={styles.waitingContainer}>
               <h1 style={{ fontSize: '60px' }}>🛵</h1>
               <h2 style={{ color: '#ff6600' }}>รอการอนุมัติ</h2>
-              <p style={{ color: '#888' }}>บัญชีไรเดอร์ของคุณอยู่ระหว่างตรวจสอบจากแอดมิน</p>
+              <p style={{ color: '#888' }}>บัญชีไรเดอร์ของคุณอยู่ระหว่างตรวจสอบโดยแอดมิน</p>
               <button onClick={() => supabase.auth.signOut()} style={styles.logoutMiniBtn}>ออกจากระบบ</button>
             </div>
           )}
         </ProtectedRoute>
       } />
 
-      {/* --- หน้าแชท (เข้าได้ทุกคนที่ล็อกอิน) --- */}
+      {/* --- ส่วนแอดมิน (Admin) --- */}
+      <Route path="/admin" element={
+        <ProtectedRoute user={user} userData={userData} allowedRole="admin">
+          <AdminDashboard />
+        </ProtectedRoute>
+      } />
+
+      {/* --- หน้าแชท (เข้าได้ทุกบทบาทที่ Login แล้ว) --- */}
       <Route path="/chat/:orderId" element={
         <ProtectedRoute user={user}>
           <Chat />
         </ProtectedRoute>
       } />
 
-      {/* --- ระบบนำทางอัจฉริยะ (Smart Redirection) --- */}
+      {/* --- ระบบ Redirect อัตโนมัติตาม Role --- */}
       <Route path="/" element={
         user ? (
           userData?.role === 'admin' ? <Navigate to="/admin" replace /> :
@@ -147,18 +149,17 @@ function App() {
         ) : <Navigate to="/login" replace />
       } />
 
-      {/* กรณีพิมพ์ URL มั่ว */}
+      {/* Fallback กรณีพิมพ์ URL ผิด */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
-// --- Inline Styles สำหรับความลื่นไหล ---
 const styles = {
   loaderContainer: { backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' },
-  loaderText: { color: '#ff6600', fontWeight: '900', fontSize: '24px', letterSpacing: '3px' },
+  loaderText: { color: '#ff6600', fontWeight: 'bold', fontSize: '24px', letterSpacing: '2px' },
   waitingContainer: { backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', textAlign: 'center', padding: '20px' },
-  logoutMiniBtn: { marginTop: '30px', background: 'none', border: '1px solid #333', color: '#666', padding: '8px 20px', borderRadius: '20px', cursor: 'pointer' }
+  logoutMiniBtn: { marginTop: '30px', background: 'none', border: '1px solid #333', color: '#666', padding: '10px 25px', borderRadius: '20px', cursor: 'pointer' }
 };
 
 export default App;
