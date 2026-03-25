@@ -1,60 +1,76 @@
-import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom'; 
-import { supabase } from './supabase'; 
+import React, { useState, useEffect, useCallback } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { supabase } from './supabase';
 
-// นำเข้าหน้าต่างๆ
-import OrderFood from './orderFood'; 
-import Login from './Login';      
-import Register from './Register'; 
-import RiderDashboard from './rider'; 
-import AdminDashboard from './admin'; 
-import Chat from './chat'; 
+// --- นำเข้าหน้าจอต่างๆ ---
+import OrderFood from './orderFood';
+import Login from './Login';
+import Register from './Register';
+import RiderDashboard from './rider';
+import AdminDashboard from './admin';
+import Chat from './chat';
 
-// ฟังก์ชันกั้นหน้าสำหรับคนที่ยังไม่ Login
-const ProtectedRoute = ({ children, user }) => {
+// ============================================================
+// 1. ระบบกั้นหน้าอัจฉริยะ (Enhanced Protected Route)
+// ============================================================
+const ProtectedRoute = ({ children, user, userData, allowedRole }) => {
+  // ถ้ายังไม่ได้ Login ให้ไปหน้า Login
   if (!user) return <Navigate to="/login" replace />;
+
+  // ถ้าเป็นหน้าเฉพาะทาง (Admin/Rider) แต่ Role ไม่ตรง ให้ดีดกลับหน้าแรกของเขา
+  if (allowedRole && userData && userData.role !== allowedRole) {
+    return <Navigate to="/" replace />;
+  }
+
   return children;
 };
 
 function App() {
   const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null); 
+  const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ฟังก์ชันดึงข้อมูลโปรไฟล์ผู้ใช้
-  const fetchUserInfo = async (userId) => {
+  // ============================================================
+  // 2. ฟังก์ชันดึงข้อมูล Profile (Memoized เพื่อประสิทธิภาพ)
+  // ============================================================
+  const fetchUserInfo = useCallback(async (userId) => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('users')
         .select('role, is_approved')
         .eq('id', userId)
         .maybeSingle();
-      
+
+      if (error) throw error;
       setUserData(data);
     } catch (err) {
-      console.error("Fetch User Info Error:", err);
+      console.error("Auth Data Error:", err.message);
       setUserData(null);
     } finally {
-      setLoading(false); // บังคับให้ปิดหน้า Loading เสมอ
+      setLoading(false);
     }
-  };
+  }, []);
 
+  // ============================================================
+  // 3. ระบบติดตามสถานะผู้ใช้ (Single Source of Truth)
+  // ============================================================
   useEffect(() => {
-    // 1. เช็คตอนเปิดแอป
-    const initAuth = async () => {
+    // เช็ค Session ปัจจุบัน
+    const initialize = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
+      if (session?.user) {
         setUser(session.user);
         await fetchUserInfo(session.user.id);
       } else {
         setLoading(false);
       }
     };
-    initAuth();
 
-    // 2. ฟังการเปลี่ยนแปลง (Login/Logout)
+    initialize();
+
+    // ฟังการเปลี่ยนแปลงสถานะ (Login / Logout / Token Expired)
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session) {
+      if (session?.user) {
         setUser(session.user);
         await fetchUserInfo(session.user.id);
       } else {
@@ -65,34 +81,64 @@ function App() {
     });
 
     return () => authListener.subscription.unsubscribe();
-  }, []);
+  }, [fetchUserInfo]);
 
-  // หน้าจอรอโหลด
+  // ============================================================
+  // 4. ส่วนการแสดงผล Loading (Dark Mode UI)
+  // ============================================================
   if (loading) return (
-    <div className="bg-black min-h-screen flex items-center justify-center text-orange-500 font-bold">
-      🍔 FOODAPP PRO LOADING...
+    <div style={styles.loaderContainer}>
+      <div style={styles.loaderText} className="animate-pulse">
+        🍔 FOODAPP PRO <span style={{ color: '#fff' }}>SYSTEM</span>
+      </div>
+      <small style={{ color: '#444', marginTop: '10px' }}>กำลังตรวจสอบสิทธิ์การเข้าถึง...</small>
     </div>
   );
 
   return (
     <Routes>
-      {/* หน้า Login & Register */}
+      {/* --- เส้นทางสาธารณะ (Public) --- */}
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register />} />
 
-      {/* หน้าสำหรับ Customer */}
-      <Route path="/order" element={<ProtectedRoute user={user}><OrderFood /></ProtectedRoute>} />
+      {/* --- หน้าสั่งอาหาร (Customer Only) --- */}
+      <Route path="/order" element={
+        <ProtectedRoute user={user} userData={userData} allowedRole="customer">
+          <OrderFood />
+        </ProtectedRoute>
+      } />
 
-      {/* หน้าสำหรับ Rider */}
-      <Route path="/rider" element={<ProtectedRoute user={user}><RiderDashboard /></ProtectedRoute>} />
+      {/* --- หน้าแอดมิน (Admin Only) --- */}
+      <Route path="/admin" element={
+        <ProtectedRoute user={user} userData={userData} allowedRole="admin">
+          <AdminDashboard />
+        </ProtectedRoute>
+      } />
 
-      {/* หน้าสำหรับ Admin */}
-      <Route path="/admin" element={<ProtectedRoute user={user}><AdminDashboard /></ProtectedRoute>} />
+      {/* --- หน้าไรเดอร์ (Rider Only + ระบบอนุมัติ) --- */}
+      <Route path="/rider" element={
+        <ProtectedRoute user={user} userData={userData} allowedRole="rider">
+          {userData?.is_approved ? (
+            <RiderDashboard />
+          ) : (
+            <div style={styles.waitingContainer}>
+              <h1 style={{ fontSize: '60px' }}>🛵</h1>
+              <h2 style={{ color: '#ff6600' }}>รอการอนุมัติ</h2>
+              <p style={{ color: '#888' }}>บัญชีไรเดอร์ของคุณอยู่ระหว่างตรวจสอบจากแอดมิน</p>
+              <button onClick={() => supabase.auth.signOut()} style={styles.logoutMiniBtn}>ออกจากระบบ</button>
+            </div>
+          )}
+        </ProtectedRoute>
+      } />
 
-      {/* หน้า Chat */}
-      <Route path="/chat/:orderId" element={<ProtectedRoute user={user}><Chat /></ProtectedRoute>} />
+      {/* --- หน้าแชท (เข้าได้ทุกคนที่ล็อกอิน) --- */}
+      <Route path="/chat/:orderId" element={
+        <ProtectedRoute user={user}>
+          <Chat />
+        </ProtectedRoute>
+      } />
 
-      {/* ✅ จุดที่แก้ไข: ตัวจัดการการส่งหน้า (Redirection Logic) */}
+      {/* --- ระบบนำทางอัจฉริยะ (Smart Redirection) --- */}
       <Route path="/" element={
         user ? (
           userData?.role === 'admin' ? <Navigate to="/admin" replace /> :
@@ -101,10 +147,18 @@ function App() {
         ) : <Navigate to="/login" replace />
       } />
 
-      {/* กันเหนียว: ถ้าพิมพ์ URL ผิดให้กลับไปหน้าแรก */}
+      {/* กรณีพิมพ์ URL มั่ว */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
+
+// --- Inline Styles สำหรับความลื่นไหล ---
+const styles = {
+  loaderContainer: { backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' },
+  loaderText: { color: '#ff6600', fontWeight: '900', fontSize: '24px', letterSpacing: '3px' },
+  waitingContainer: { backgroundColor: '#000', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', textAlign: 'center', padding: '20px' },
+  logoutMiniBtn: { marginTop: '30px', background: 'none', border: '1px solid #333', color: '#666', padding: '8px 20px', borderRadius: '20px', cursor: 'pointer' }
+};
 
 export default App;

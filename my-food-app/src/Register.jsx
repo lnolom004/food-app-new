@@ -6,7 +6,7 @@ const Register = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
-  const [role, setRole] = useState('user'); 
+  const [role, setRole] = useState('customer'); // เปลี่ยนจาก user เป็น customer เพื่อความชัดเจน
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
@@ -15,6 +15,7 @@ const Register = () => {
     setLoading(true);
 
     try {
+      // 1. สมัครสมาชิกในระบบ Auth ของ Supabase
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email,
         password: password,
@@ -23,6 +24,7 @@ const Register = () => {
       if (authError) throw authError;
 
       if (authData.user) {
+        // 2. บันทึกข้อมูลลงตาราง public.users
         const { error: dbError } = await supabase
           .from('users')
           .insert([
@@ -31,13 +33,21 @@ const Register = () => {
               username: username,
               email: email, 
               role: role,
-              is_approved: role === 'user' ? true : false 
+              // ✅ เงื่อนไข: ถ้าสมัครเป็น customer ให้ผ่านเลย (true) 
+              // ถ้าสมัครเป็น rider ให้รออนุมัติ (false)
+              is_approved: role === 'customer' ? true : false 
             }
           ]);
 
         if (dbError) throw dbError;
 
-        alert("สมัครสมาชิกสำเร็จ! 🎉");
+        // แจ้งเตือนแยกตามประเภท
+        if (role === 'rider') {
+          alert("สมัครไรเดอร์สำเร็จ! 🎉 โปรดรอแอดมินตรวจสอบและอนุมัติบัญชีของคุณ");
+        } else {
+          alert("สมัครสมาชิกสำเร็จ! ยินดีต้อนรับครับ 🎉");
+        }
+        
         navigate('/login');
       }
     } catch (error) {
@@ -48,43 +58,42 @@ const Register = () => {
   };
 
   return (
-    <div style={containerStyle}>
-      <form onSubmit={handleRegister} style={formStyle}>
-        {/* ส่วนของโลโก้ หรือ รูปภาพด้านบน (ทำให้เท่ากัน) */}
-        <div style={logoContainer}>
+    <div style={styles.container}>
+      <form onSubmit={handleRegister} style={styles.form}>
+        <div style={styles.logoContainer}>
             <img 
                 src="https://img5.pic.in.th" 
                 alt="Logo" 
-                style={logoStyle} 
+                style={styles.logo} 
             />
         </div>
 
         <h2 style={{ textAlign: 'center', color: '#ff6600', marginBottom: '20px' }}>📝 สมัครสมาชิกใหม่</h2>
         
-        <div style={inputGroup}>
-            <label style={labelStyle}>ชื่อผู้ใช้ (Username)</label>
-            <input type="text" style={inputStyle} onChange={(e) => setUsername(e.target.value)} required />
+        <div style={styles.inputGroup}>
+            <label style={styles.label}>ชื่อผู้ใช้ (Username)</label>
+            <input type="text" style={styles.input} onChange={(e) => setUsername(e.target.value)} required />
         </div>
 
-        <div style={inputGroup}>
-            <label style={labelStyle}>อีเมล (Email)</label>
-            <input type="email" style={inputStyle} onChange={(e) => setEmail(e.target.value)} required />
+        <div style={styles.inputGroup}>
+            <label style={styles.label}>อีเมล (Email)</label>
+            <input type="email" style={styles.input} onChange={(e) => setEmail(e.target.value)} required />
         </div>
 
-        <div style={inputGroup}>
-            <label style={labelStyle}>รหัสผ่าน (Password)</label>
-            <input type="password" style={inputStyle} onChange={(e) => setPassword(e.target.value)} required />
+        <div style={styles.inputGroup}>
+            <label style={styles.label}>รหัสผ่าน (Password)</label>
+            <input type="password" style={styles.input} onChange={(e) => setPassword(e.target.value)} required />
         </div>
         
-        <div style={inputGroup}>
-          <label style={labelStyle}>สมัครในฐานะ:</label>
-          <select style={inputStyle} value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="user">🛒 ลูกค้าทั่วไป (สั่งอาหาร)</option>
+        <div style={styles.inputGroup}>
+          <label style={styles.label}>สมัครในฐานะ:</label>
+          <select style={styles.input} value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="customer">🛒 ลูกค้าทั่วไป (สั่งอาหาร)</option>
             <option value="rider">🛵 ไรเดอร์ (ส่งอาหาร)</option>
           </select>
         </div>
 
-        <button type="submit" disabled={loading} style={buttonStyle}>
+        <button type="submit" disabled={loading} style={styles.button}>
           {loading ? 'กำลังบันทึกข้อมูล...' : 'ยืนยันการสมัครสมาชิก'}
         </button>
         
@@ -96,73 +105,16 @@ const Register = () => {
   );
 };
 
-// --- Styles (Dark Theme & Uniformity) ---
-
-const containerStyle = { 
-    display: 'flex', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    minHeight: '100vh', 
-    backgroundColor: '#000000', // พื้นหลังสีดำสนิท
-    fontFamily: "'Kanit', sans-serif" 
-};
-
-const formStyle = { 
-    backgroundColor: '#1a1a1a', // กล่องฟอร์มสีเทาเข้ม
-    padding: '40px', 
-    borderRadius: '20px', 
-    boxShadow: '0 10px 30px rgba(0,0,0,0.5)', 
-    width: '100%',
-    maxWidth: '400px' 
-};
-
-const logoContainer = {
-    display: 'flex',
-    justifyContent: 'center',
-    marginBottom: '20px'
-};
-
-const logoStyle = {
-    width: '80px',      // กำหนดความกว้างเท่ากัน
-    height: '80px',     // กำหนดความสูงเท่ากัน
-    objectFit: 'contain', // ปรับรูปให้พอดีไม่เบี้ยว
-    borderRadius: '15px'
-};
-
-const inputGroup = {
-    marginBottom: '15px'
-};
-
-const labelStyle = {
-    display: 'block',
-    color: '#eee',
-    marginBottom: '5px',
-    fontSize: '14px'
-};
-
-const inputStyle = { 
-    width: '100%', 
-    padding: '12px', 
-    borderRadius: '10px', 
-    border: '1px solid #333', 
-    backgroundColor: '#2a2a2a', // พื้นหลังช่องกรอกสีเข้ม
-    color: 'white', 
-    boxSizing: 'border-box',
-    fontSize: '16px'
-};
-
-const buttonStyle = { 
-    width: '100%', 
-    padding: '14px', 
-    marginTop: '10px', 
-    backgroundColor: '#ff6600', 
-    color: 'white', 
-    border: 'none', 
-    borderRadius: '10px', 
-    cursor: 'pointer', 
-    fontWeight: 'bold',
-    fontSize: '16px',
-    transition: '0.3s'
+// --- การจัดการ Styles ให้เป็นระเบียบ ---
+const styles = {
+    container: { display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', backgroundColor: '#000000', fontFamily: "'Kanit', sans-serif" },
+    form: { backgroundColor: '#1a1a1a', padding: '40px', borderRadius: '20px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', width: '100%', maxWidth: '400px' },
+    logoContainer: { display: 'flex', justifyContent: 'center', marginBottom: '20px' },
+    logo: { width: '80px', height: '80px', objectFit: 'contain', borderRadius: '15px' },
+    inputGroup: { marginBottom: '15px' },
+    label: { display: 'block', color: '#eee', marginBottom: '5px', fontSize: '14px' },
+    input: { width: '100%', padding: '12px', borderRadius: '10px', border: '1px solid #333', backgroundColor: '#2a2a2a', color: 'white', boxSizing: 'border-box', fontSize: '16px' },
+    button: { width: '100%', padding: '14px', marginTop: '10px', backgroundColor: '#ff6600', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', transition: '0.3s' }
 };
 
 export default Register;

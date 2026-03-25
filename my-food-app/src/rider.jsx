@@ -1,149 +1,141 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { useNavigate } from 'react-router-dom'; // เพิ่มสำหรับระบบแชท
+import { useNavigate } from 'react-router-dom';
 
-export default function Rider() {
-  const [availableOrders, setAvailableOrders] = useState([]);
-  const [myJob, setMyJob] = useState(null);
-  const [loading, setLoading] = useState(true);
+const Rider = () => {
+  const [availableOrders, setAvailableOrders] = useState([]); // งานที่รอคนรับ
+  const [myHistory, setMyHistory] = useState([]); // ประวัติงานของเรา
+  const [todayCount, setTodayCount] = useState(0); // จำนวนงานวันนี้
+  const [uid, setUid] = useState(null);
   const navigate = useNavigate();
 
-  // 1. เสียงแจ้งเตือนสำหรับไรเดอร์
-  const playRiderSound = () => {
-    const audio = new Audio('https://assets.mixkit.co');
-    audio.play().catch(() => {});
-  };
-
-  const fetchData = async () => {
-    setLoading(true);
-    // ดึงออเดอร์ที่สถานะ "กำลังทำ" และยังไม่มีไรเดอร์รับ
-    const { data } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('status', 'กำลังทำ')
-      .is('rider_id', null)
-      .order('created_at', { ascending: false });
-    
-    setAvailableOrders(data || []);
-    setLoading(false);
-  };
-
   useEffect(() => {
-    fetchData();
+    const initRider = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUid(user.id);
+        fetchData(user.id);
+      }
 
-    // 2. Real-time แจ้งเตือนเมื่อมีงานใหม่
-    const channel = supabase
-      .channel('rider-jobs')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, (payload) => {
-        if (payload.new.status === 'กำลังทำ' && !payload.new.rider_id) {
-          playRiderSound();
-          fetchData();
-        }
-      })
-      .subscribe();
+      // ระบบ Real-time: อัปเดตเมื่อมีการเปลี่ยนแปลงในตาราง orders
+      const channel = supabase.channel('rider-live')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+          if (user) fetchData(user.id);
+        }).subscribe();
 
-    return () => supabase.removeChannel(channel);
+      return () => supabase.removeChannel(channel);
+    };
+    initRider();
   }, []);
 
-  // 3. ฟังก์ชันกดรับงาน พร้อมบันทึกเบอร์โทรไรเดอร์
-  const acceptOrder = async (orderId) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const riderId = userData.user.id;
-    const riderPhone = "081-XXX-XXXX"; // ควรดึงจาก profile ไรเดอร์จริงๆ
-
-    const { error } = await supabase
+  const fetchData = async (userId) => {
+    // 1. ดึงงานที่ "ว่างอยู่" (ยังไม่มีใครรับ)
+    const { data: available } = await supabase
       .from('orders')
-      .update({ 
-        rider_id: riderId, 
-        rider_phone: riderPhone, // เพิ่มเบอร์เพื่อให้ลูกค้าเห็น
-        status: 'ไรเดอร์กำลังไปรับ' 
-      })
-      .eq('id', orderId);
+      .select('*')
+      .eq('status', 'pending')
+      .is('rider_id', null)
+      .order('created_at', { ascending: false });
+    setAvailableOrders(available || []);
 
-    if (!error) {
-      alert("✅ รับงานสำเร็จ! เดินทางปลอดภัยครับ");
-      const job = availableOrders.find(o => o.id === orderId);
-      setMyJob(job);
-      fetchData();
-    }
+    // 2. ดึง "ประวัติงาน" ของเราเอง
+    const { data: history } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('rider_id', userId)
+      .order('created_at', { ascending: false });
+    setMyHistory(history || []);
+
+    // 3. คำนวณงานที่รับไป "วันนี้"
+    const today = new Date().toISOString().split('T')[0];
+    const countToday = (history || []).filter(o => o.created_at.startsWith(today)).length;
+    setTodayCount(countToday);
   };
 
-  // 4. ฟังก์ชันเปิดแผนที่นำทางไปยังพิกัดลูกค้า (Google Maps)
-  const openNavigation = (lat, lng) => {
-    if (!lat || !lng) return alert("ขออภัย ไม่พบพิกัดตำแหน่งของลูกค้า");
-    // ลิงก์นำทาง Google Maps ที่ถูกต้อง
-    const url = `https://www.google.com{lat},${lng}`;
-    window.open(url, '_blank');
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/login');
   };
-
-  if (loading) return <div className="p-10 text-center font-bold text-blue-500">กำลังค้นหางานใกล้ตัว...</div>;
 
   return (
-    <div className="max-w-4xl mx-auto p-4 bg-gray-900 min-h-screen text-white"> {/* ปรับเป็น Dark Mode ตามสไตล์แอป */}
-      <header className="flex justify-between items-center mb-6 bg-gray-800 p-4 rounded-2xl shadow-lg border-b-4 border-orange-500">
-        <h1 className="text-xl font-bold">🛵 Rider Dashboard</h1>
-        <div className="text-xs bg-green-500 text-white px-3 py-1 rounded-full font-bold animate-pulse">
-          Online
-        </div>
+    <div style={styles.container}>
+      {/* Header */}
+      <header style={styles.header}>
+        <h2 style={{ color: '#ff6600', margin: 0 }}>🛵 Rider Dashboard</h2>
+        <button onClick={handleLogout} style={styles.logoutBtn}>ออกจากระบบ</button>
       </header>
 
-      {/* ส่วนงานที่กำลังทำอยู่ (Active Job) */}
-      {myJob && (
-        <div className="mb-8 p-6 bg-orange-600 text-white rounded-3xl shadow-2xl">
-          <h2 className="font-bold text-lg mb-4">🔥 งานปัจจุบันของคุณ</h2>
-          <div className="bg-orange-700 p-4 rounded-xl mb-4">
-            <p className="text-sm opacity-80">เมนูอาหาร:</p>
-            <p className="font-bold">{myJob.food_menu}</p>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-3">
-            <button 
-              onClick={() => openNavigation(myJob.lat, myJob.lng)}
-              className="bg-white text-orange-600 font-bold py-3 rounded-xl shadow-md flex items-center justify-center gap-2"
-            >
-              📍 นำทาง (Maps)
-            </button>
-            <a 
-              href={`tel:${myJob.customer_phone}`} 
-              className="bg-green-500 text-white font-bold py-3 rounded-xl shadow-md flex items-center justify-center gap-2 text-center"
-            >
-              📞 โทรหาลูกค้า
-            </a>
-            <button 
-              onClick={() => navigate(`/chat/${myJob.id}`)}
-              className="col-span-2 bg-gray-800 text-white font-bold py-3 rounded-xl shadow-md flex items-center justify-center gap-2 mt-2"
-            >
-              💬 แชทกับลูกค้า
-            </button>
-          </div>
+      {/* สรุปงานวันนี้ */}
+      <div style={styles.summaryContainer}>
+        <div style={styles.summaryCard}>
+          <span style={{ color: '#888', fontSize: '14px' }}>งานที่รับวันนี้</span>
+          <h1 style={{ margin: '5px 0', color: '#ff6600' }}>{todayCount}</h1>
+          <span style={{ fontSize: '12px', color: '#444' }}>ออเดอร์</span>
         </div>
-      )}
-
-      {/* ส่วนรายการงานใหม่ */}
-      <h2 className="font-bold text-gray-400 mb-4 px-2">📦 ออเดอร์รอคนรับ ({availableOrders.length})</h2>
-      <div className="grid gap-4">
-        {availableOrders.length === 0 ? (
-          <div className="text-center py-20 text-gray-600">เงียบเหงาจัง... ยังไม่มีงานใหม่</div>
-        ) : (
-          availableOrders.map(order => (
-            <div key={order.id} className="bg-gray-800 p-5 rounded-2xl shadow-md border border-gray-700 flex justify-between items-center">
-              <div className="flex-1">
-                <p className="font-bold text-orange-500 text-lg mb-1">{order.food_menu}</p>
-                <div className="flex gap-4 text-xs text-gray-400">
-                  <span>💰 ค่ารอบ: <b className="text-green-400">฿{order.delivery_fee || 40}</b></span>
-                  <span>📍 {order.distance || '2.5'} กม.</span>
-                </div>
-              </div>
-              <button 
-                onClick={() => acceptOrder(order.id)}
-                className="bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-xl font-bold transition-all active:scale-95 shadow-lg"
-              >
-                รับงาน
-              </button>
-            </div>
-          ))
-        )}
+        <div style={styles.summaryCard}>
+          <span style={{ color: '#888', fontSize: '14px' }}>สถานะระบบ</span>
+          <h3 style={{ margin: '10px 0', color: '#00ff00' }}>● Online</h3>
+        </div>
       </div>
+
+      {/* ส่วนงานที่รอรับ (Available) */}
+      <section style={{ marginBottom: '40px' }}>
+        <h3 style={styles.sectionTitle}>📦 งานที่รอคนรับ ({availableOrders.length})</h3>
+        {availableOrders.length === 0 ? (
+          <p style={styles.emptyText}>ยังไม่มีงานใหม่เข้ามา...</p>
+        ) : (
+          <div style={styles.grid}>
+            {availableOrders.map(o => (
+              <div key={o.id} style={styles.orderCard}>
+                <div style={styles.cardHead}>
+                  <span>#{o.id.slice(0, 5)}</span>
+                  <b style={{ color: '#ff6600' }}>฿{o.total_price}</b>
+                </div>
+                <p style={{ fontSize: '14px', margin: '10px 0' }}>📍 {o.address || 'ชุมชนใกล้เคียง'}</p>
+                <button onClick={() => navigate(`/chat/${o.id}`)} style={styles.btnAction}>ดูรายละเอียด / รับงาน</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ส่วนประวัติงาน (History) */}
+      <section>
+        <h3 style={styles.sectionTitle}>🕒 ประวัติงานของคุณ</h3>
+        <div style={styles.historyList}>
+          {myHistory.map(o => (
+            <div key={o.id} style={styles.historyItem}>
+              <div>
+                <div style={{ fontSize: '14px' }}>ออเดอร์ #{o.id.slice(0, 5)}</div>
+                <div style={{ fontSize: '12px', color: '#666' }}>{new Date(o.created_at).toLocaleDateString()}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ color: '#ff6600', fontWeight: 'bold' }}>฿{o.total_price}</div>
+                <button onClick={() => navigate(`/chat/${o.id}`)} style={styles.btnMini}>💬 แชท</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
-}
+};
+
+const styles = {
+  container: { backgroundColor: '#000', minHeight: '100vh', color: '#fff', padding: '20px', fontFamily: 'Kanit' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' },
+  logoutBtn: { background: 'none', border: '1px solid #333', color: '#666', padding: '5px 15px', borderRadius: '20px', cursor: 'pointer' },
+  summaryContainer: { display: 'flex', gap: '15px', marginBottom: '30px' },
+  summaryCard: { flex: 1, backgroundColor: '#111', padding: '15px', borderRadius: '15px', border: '1px solid #222', textAlign: 'center' },
+  sectionTitle: { borderLeft: '4px solid #ff6600', paddingLeft: '10px', marginBottom: '15px' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '15px' },
+  orderCard: { backgroundColor: '#111', padding: '15px', borderRadius: '15px', border: '1px solid #222' },
+  cardHead: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #222', paddingBottom: '10px' },
+  btnAction: { width: '100%', padding: '10px', backgroundColor: '#ff6600', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer' },
+  historyList: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  historyItem: { backgroundColor: '#111', padding: '15px', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #222' },
+  btnMini: { marginTop: '5px', background: 'none', border: '1px solid #333', color: '#ff6600', padding: '2px 10px', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' },
+  emptyText: { color: '#444', textAlign: 'center', padding: '20px' }
+};
+
+export default Rider;

@@ -1,90 +1,132 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
+import { useNavigate } from 'react-router-dom';
 
-export default function Admin() {
-  const [orders, setOrders] = useState([]);
-  const [newRiders, setNewRiders] = useState([]);
+const AdminDashboard = () => {
   const [menus, setMenus] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [newMenu, setNewMenu] = useState({ name: '', price: '', image_url: '' });
-
-  const playSound = () => {
-    const audio = new Audio('https://assets.mixkit.co');
-    audio.play().catch(() => {});
-  };
-
-  const fetchData = async () => {
-    const { data: ord } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-    const { data: rid } = await supabase.from('users').select('*').eq('is_approved', false);
-    const { data: men } = await supabase.from('menus').select('*').order('name');
-    setOrders(ord || []); setNewRiders(rid || []); setMenus(men || []); setLoading(false);
-  };
+  const [riders, setRiders] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [menuForm, setMenuForm] = useState({ name: '', price: '', category: 'อาหาร', image_url: '' });
+  const navigate = useNavigate();
 
   useEffect(() => {
-    fetchData();
-    const channel = supabase.channel('admin-db').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, () => {
-      playSound(); alert("🚀 มีออเดอร์ใหม่!"); fetchData();
-    }).subscribe();
-    return () => supabase.removeChannel(channel);
+    fetchAllData();
+    // ระบบแจ้งเตือน Realtime สำหรับออเดอร์ใหม่
+    const orderSub = supabase.channel('admin-live')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (p) => {
+        alert("🔔 มีออเดอร์ใหม่เข้ามา!"); // แจ้งเตือนหน้าจอ
+        fetchAllData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, fetchAllData)
+      .subscribe();
+
+    return () => supabase.removeChannel(orderSub);
   }, []);
 
-  const getDailySales = () => {
-    const sales = {};
-    orders.forEach(o => {
-      const d = new Date(o.created_at).toLocaleDateString('th-TH');
-      sales[d] = (sales[d] || 0) + (Number(o.total_price) || 0);
-    });
-    return Object.entries(sales).sort((a, b) => b[0].localeCompare(a[0]));
+  const fetchAllData = async () => {
+    const { data: m } = await supabase.from('menus').select('*').order('created_at', { ascending: false });
+    const { data: r } = await supabase.from('users').select('*').eq('role', 'rider').eq('is_approved', false);
+    const { data: o } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(10);
+    setMenus(m || []);
+    setRiders(r || []);
+    setOrders(o || []);
   };
 
-  const handleApprove = async (id) => {
+  // --- 1. จัดการเมนู ---
+  const handleAddMenu = async (e) => {
+    e.preventDefault();
+    await supabase.from('menus').insert([menuForm]);
+    setMenuForm({ name: '', price: '', category: 'อาหาร', image_url: '' });
+    fetchAllData();
+  };
+
+  const deleteMenu = async (id) => {
+    if (confirm("ลบเมนูนี้?")) {
+      await supabase.from('menus').delete().eq('id', id);
+      fetchAllData();
+    }
+  };
+
+  // --- 2. อนุมัติไรเดอร์ ---
+  const approveRider = async (id) => {
     const { error } = await supabase.from('users').update({ is_approved: true }).eq('id', id);
-    if (!error) { alert('อนุมัติแล้ว!'); fetchData(); }
+    if (!error) alert("อนุมัติไรเดอร์สำเร็จ!");
+    fetchAllData();
   };
-
-  if (loading) return <div className="p-20 text-center text-white bg-gray-900 min-h-screen">กำลังโหลดระบบแอดมิน...</div>;
 
   return (
-    <div className="bg-gray-900 min-h-screen p-6 text-gray-200">
-      <h1 className="text-3xl font-black mb-10 text-center text-orange-500">🕵️ ADMIN CONTROL PANEL</h1>
-      
-      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
-        <div className="bg-gray-800 p-6 rounded-3xl border border-gray-700">
-          <h2 className="text-xl font-bold mb-4 text-green-500">💰 ยอดขายรายวัน</h2>
-          {getDailySales().map(([date, total]) => (
-            <div key={date} className="flex justify-between border-b border-gray-700 py-2">
-              <span>{date}</span><span className="font-bold">฿{total.toLocaleString()}</span>
-            </div>
-          ))}
-        </div>
-        <div className="bg-gray-800 p-6 rounded-3xl border border-gray-700 text-center">
-          <h2 className="text-xl font-bold mb-4 text-blue-500">⏳ รออนุมัติ ({newRiders.length})</h2>
-          {newRiders.map(r => (
-            <div key={r.id} className="flex justify-between items-center bg-gray-900 p-3 rounded-2xl mb-2">
-              <span className="text-xs">{r.email}</span>
-              <button onClick={() => handleApprove(r.id)} className="bg-blue-600 text-white px-4 py-1 rounded-xl text-xs">อนุมัติ</button>
-            </div>
-          ))}
-        </div>
-      </div>
+    <div style={styles.container}>
+      <header style={styles.header}>
+        <h2 style={{ color: '#ff6600' }}>⚙️ ระบบจัดการหลังบ้าน (Admin)</h2>
+        <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>ออกจากระบบ</button>
+      </header>
 
-      <div className="max-w-6xl mx-auto bg-gray-800 p-6 rounded-3xl border border-gray-700 mb-10">
-        <h2 className="text-xl font-bold mb-6 text-orange-500">🍲 จัดการเมนูอาหาร</h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <input className="bg-gray-900 border-none rounded-xl p-3" placeholder="ชื่ออาหาร" value={newMenu.name} onChange={e => setNewMenu({...newMenu, name: e.target.value})} />
-          <input className="bg-gray-900 border-none rounded-xl p-3" placeholder="ราคา" type="number" value={newMenu.price} onChange={e => setNewMenu({...newMenu, price: e.target.value})} />
-          <input className="bg-gray-900 border-none rounded-xl p-3" placeholder="URL รูป" value={newMenu.image_url} onChange={e => setNewMenu({...newMenu, image_url: e.target.value})} />
-          <button onClick={async () => { await supabase.from('menus').insert([newMenu]); fetchData(); }} className="bg-orange-600 rounded-xl font-bold">เพิ่มเมนู</button>
-        </div>
-        <div className="grid grid-cols-4 md:grid-cols-8 gap-4">
-          {menus.map(m => (
-            <div key={m.id} className="relative group rounded-xl overflow-hidden">
-              <img src={m.image_url} className="h-16 w-full object-cover" alt="" />
-              <button onClick={async () => { await supabase.from('menus').delete().eq('id', m.id); fetchData(); }} className="absolute inset-0 bg-red-600/80 opacity-0 group-hover:opacity-100 flex items-center justify-center font-bold">ลบ</button>
+      <div style={styles.gridContainer}>
+        
+        {/* ส่วนที่ 1: จัดการเมนูอาหาร */}
+        <section style={styles.section}>
+          <h3>🍔 จัดการเมนูอาหาร</h3>
+          <form onSubmit={handleAddMenu} style={styles.form}>
+            <input type="text" placeholder="ชื่อเมนู" value={menuForm.name} onChange={e=>setMenuForm({...menuForm, name:e.target.value})} required style={styles.input} />
+            <input type="number" placeholder="ราคา" value={menuForm.price} onChange={e=>setMenuForm({...menuForm, price:e.target.value})} required style={styles.input} />
+            <button type="submit" style={styles.addBtn}>เพิ่มเมนู</button>
+          </form>
+          <div style={styles.list}>
+            {menus.map(m => (
+              <div key={m.id} style={styles.item}>
+                <span>{m.name} - ฿{m.price}</span>
+                <button onClick={() => deleteMenu(m.id)} style={{color: 'red', border:'none', background:'none', cursor:'pointer'}}>ลบ</button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ส่วนที่ 2: อนุมัติไรเดอร์ (Wait for Approval) */}
+        <section style={styles.section}>
+          <h3>🛵 อนุมัติไรเดอร์ใหม่ ({riders.length})</h3>
+          {riders.length === 0 ? <p style={{color:'#666'}}>ไม่มีผู้สมัครใหม่</p> : 
+            riders.map(r => (
+              <div key={r.id} style={styles.item}>
+                <span>{r.email}</span>
+                <button onClick={() => approveRider(r.id)} style={styles.approveBtn}>อนุมัติ</button>
+              </div>
+            ))
+          }
+        </section>
+
+        {/* ส่วนที่ 3: ออเดอร์ล่าสุด & แชทตอบกลับ */}
+        <section style={styles.section}>
+          <h3>📦 ออเดอร์ล่าสุด & ติดต่อลูกค้า</h3>
+          {orders.map(o => (
+            <div key={o.id} style={styles.orderCard}>
+              <div style={{display:'flex', justifyContent:'space-between'}}>
+                <small>ID: {o.id.slice(0,8)}</small>
+                <b style={{color:'#ff6600'}}>฿{o.total_price}</b>
+              </div>
+              <p style={{fontSize:'12px', margin:'5px 0'}}>สถานะ: {o.status}</p>
+              <button onClick={() => navigate(`/chat/${o.id}`)} style={styles.chatBtn}>💬 ตอบแชทลูกค้า</button>
             </div>
           ))}
-        </div>
+        </section>
+
       </div>
     </div>
   );
-}
+};
+
+const styles = {
+  container: { backgroundColor: '#000', minHeight: '100vh', color: '#fff', padding: '20px', fontFamily: 'Kanit' },
+  header: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #222', paddingBottom: '10px', marginBottom: '20px' },
+  gridContainer: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' },
+  section: { backgroundColor: '#111', padding: '20px', borderRadius: '15px', border: '1px solid #222' },
+  input: { padding: '8px', marginBottom: '10px', width: '100%', boxSizing: 'border-box', backgroundColor: '#222', color: '#fff', border: '1px solid #333', borderRadius: '5px' },
+  addBtn: { width: '100%', padding: '10px', backgroundColor: '#ff6600', color: '#fff', border: 'none', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
+  list: { marginTop: '15px', maxHeight: '200px', overflowY: 'auto' },
+  item: { display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #222' },
+  approveBtn: { backgroundColor: '#00ff00', color: '#000', border: 'none', padding: '5px 10px', borderRadius: '5px', fontWeight: 'bold', cursor: 'pointer' },
+  orderCard: { backgroundColor: '#1a1a1a', padding: '15px', borderRadius: '10px', marginBottom: '10px', border: '1px solid #333' },
+  chatBtn: { width: '100%', padding: '8px', backgroundColor: '#333', color: '#ff6600', border: '1px solid #ff6600', borderRadius: '5px', cursor: 'pointer', marginTop: '5px' },
+  logoutBtn: { background: 'none', border: '1px solid #444', color: '#888', padding: '5px 15px', borderRadius: '20px', cursor: 'pointer' }
+};
+
+export default AdminDashboard;
