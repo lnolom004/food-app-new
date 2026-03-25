@@ -228,7 +228,17 @@ const styles = {
   itemsInOrder: { backgroundColor: '#1a1a1a', padding: '10px', borderRadius: '10px', marginTop: '8px' },
   orderActions: { display: 'flex', gap: '10px', marginTop: '15px' },
   chatBtn: { flex: 1, backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px', cursor: 'pointer' },
-  btnCancel: { flex: 1, backgroundColor: '#ff4444', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px', cursor: 'pointer' }
+    btnCancel: { flex: 1, backgroundColor: '#ff4444', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px', cursor: 'pointer' },
+    logoutBtn: {
+      backgroundColor: '#fff',
+      color: '#000',
+      border: 'none',
+      padding: '8px 16px',
+      borderRadius: '8px',
+      cursor: 'pointer',
+      fontWeight: 'bold',
+      fontSize: '14px'
+    }
 };
 
 export default OrderFood;
