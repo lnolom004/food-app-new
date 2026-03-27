@@ -1,220 +1,153 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from './supabase';
+import { supabase } from './supabase'; 
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-hot-toast'; 
 
 const AdminDashboard = () => {
-  // --- 1. State: จัดการข้อมูลในหน้าจอ ---
-  const [activeTab, setActiveTab] = useState('overview'); 
-  const [menus, setMenus] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [pendingRiders, setPendingRiders] = useState([]);
-  const [approvedRiders, setApprovedRiders] = useState([]);
-  const [salesStats, setSalesStats] = useState({ daily: 0, weekly: 0, monthly: 0 });
-  
-  // State สำหรับฟอร์มเพิ่มเมนู
-  const [menuForm, setMenuForm] = useState({ name: '', price: '', image_url: '', category: 'อาหาร' });
-  const navigate = useNavigate();
+    const [activeTab, setActiveTab] = useState('overview');
+    const [menus, setMenus] = useState([]);
+    const [orders, setOrders] = useState([]);
+    const [riders, setRiders] = useState([]);
+    const [loading, setLoading] = useState(true);
 
-  // --- 2. Logic: ดึงข้อมูลและคำนวณสถิติ ---
-  const fetchAllData = useCallback(async () => {
-    // ดึงเมนูทั้งหมด
-    const { data: m } = await supabase.from('menus').select('*').order('created_at', { ascending: false });
-    // ดึงออเดอร์ทั้งหมด
-    const { data: o } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-    // ดึงไรเดอร์ทั้งหมด
-    const { data: u } = await supabase.from('users').select('*').eq('role', 'rider');
+    // 1. ฟังก์ชันดึงข้อมูลทั้งหมด
+    const fetchAllData = useCallback(async () => {
+        setLoading(true);
+        try {
+            // ดึงข้อมูลเมนู
+            const { data: m } = await supabase.from('menus').select('*').order('created_at', { ascending: false });
+            // ดึงข้อมูลออเดอร์
+            const { data: o } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+            // ดึงข้อมูลไรเดอร์ (ใช้ชื่อคอลัมน์ role ให้ตรงกับ DB)
+            const { data: u, error: rError } = await supabase.from('users').select('*').eq('role', 'rider');
 
-    setMenus(m || []);
-    setOrders(o || []);
-    setPendingRiders(u?.filter(r => !r.is_approved) || []);
-    setApprovedRiders(u?.filter(r => r.is_approved) || []);
+            if (rError) console.error("Rider Fetch Error:", rError);
 
-    // คำนวณยอดขายราย วัน/สัปดาห์/เดือน (เฉพาะสถานะ completed)
-    if (o) {
-      const completed = o.filter(item => item.status === 'completed');
-      const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
-      
-      const daily = completed.filter(i => i.created_at.startsWith(todayStr)).reduce((s, i) => s + (Number(i.total_price) || 0), 0);
-      
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(now.getDate() - 7);
-      const weekly = completed.filter(i => new Date(i.created_at) >= sevenDaysAgo).reduce((s, i) => s + (Number(i.total_price) || 0), 0);
+            setMenus(m || []);
+            setOrders(o || []);
+            setRiders(u || []);
+        } catch (error) {
+            console.error("System Error:", error);
+            toast.error("เกิดข้อผิดพลาดในการดึงข้อมูล");
+        } finally {
+            setLoading(false);
+        }
+    }, []);
 
-      const monthly = completed.filter(i => {
-        const d = new Date(i.created_at);
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      }).reduce((s, i) => s + (Number(i.total_price) || 0), 0);
+    // 2. ใช้ useEffect เพื่อดึงข้อมูลครั้งแรกและติดตามการเปลี่ยนแปลง (Realtime)
+    useEffect(() => {
+        fetchAllData();
+        const channel = supabase.channel('admin-db-changes')
+            .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+                fetchAllData();
+            })
+            .subscribe();
 
-      setSalesStats({ daily, weekly, monthly });
-    }
-  }, []);
+        return () => supabase.removeChannel(channel);
+    }, [fetchAllData]);
 
-  useEffect(() => {
-    fetchAllData();
-    // ระบบ Realtime (เด้งเตือนเมื่อมีออเดอร์ใหม่ หรือแชทใหม่)
-    const channel = supabase.channel('admin-pro-2026')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchAllData)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => alert("💬 ลูกค้าทักแชทมาครับ!"))
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [fetchAllData]);
+    // 3. ฟังก์ชันอนุมัติไรเดอร์
+    const handleApprove = async (riderId) => {
+        const { error } = await supabase
+            .from('users')
+            .update({ is_approved: true })
+            .eq('id', riderId);
 
-  // --- 3. Actions: จัดการปุ่มกดต่าง ๆ ---
+        if (error) {
+            toast.error("อนุมัติไม่สำเร็จ");
+        } else {
+            toast.success("อนุมัติไรเดอร์เรียบร้อย!");
+            fetchAllData(); // โหลดข้อมูลใหม่
+        }
+    };
 
-  // จัดการเมนู (เพิ่ม/ลบ)
-  const handleAddMenu = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.from('menus').insert([menuForm]);
-    if (!error) {
-      alert("เพิ่มเมนูเรียบร้อย!");
-      setMenuForm({ name: '', price: '', image_url: '', category: 'อาหาร' });
-      fetchAllData();
-    }
-  };
+    if (loading) return <div style={st.loader}>⌛ กำลังโหลดข้อมูลระบบ...</div>;
 
-  const deleteMenu = async (id) => {
-    if (window.confirm("ต้องการลบเมนูนี้ใช่ไหม?")) {
-      await supabase.from('menus').delete().eq('id', id);
-      fetchAllData();
-    }
-  };
+    return (
+        <div style={st.container}>
+            <header style={st.header}>
+                <h2 style={{ color: '#f60', margin: 0 }}>🛡️ TEST-CHECK-1234</h2>
+                <button onClick={() => supabase.auth.signOut()} style={st.btnLogout}>Logout</button>
+            </header>
 
-  // มอบหมายงานให้ไรเดอร์ (Pending -> Shipping)
-  const assignOrder = async (orderId, riderId) => {
-    if (!riderId) return alert("โปรดเลือกไรเดอร์ก่อนครับ");
-    await supabase.from('orders').update({ rider_id: riderId, status: 'shipping' }).eq('id', orderId);
-    alert("🚀 ส่งงานให้ไรเดอร์แล้ว!");
-    fetchAllData();
-  };
+            {/* แถบเมนูหลัก */}
+            <nav style={st.tabBar}>
+                <button onClick={() => setActiveTab('overview')} style={activeTab === 'overview' ? st.tabAct : st.tab}>📊 ภาพรวม</button>
+                <button onClick={() => setActiveTab('orders')} style={activeTab === 'orders' ? st.tabAct : st.tab}>📦 ออเดอร์</button>
+                <button onClick={() => setActiveTab('riders')} style={activeTab === 'riders' ? st.tabAct : st.tab}>🛵 ไรเดอร์</button>
+            </nav>
 
-  // อนุมัติไรเดอร์
-  const approveRider = async (id) => {
-    await supabase.from('users').update({ is_approved: true }).eq('id', id);
-    fetchAllData();
-  };
-
-  return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <h2 style={{ color: '#ff6600', margin: 0 }}>🛡️ แผงควบคุมผู้ดูแลระบบ</h2>
-        <button onClick={() => supabase.auth.signOut()} style={styles.logoutBtn}>ออกจากระบบ</button>
-      </header>
-
-      {/* แถบเมนู Tabs */}
-      <div style={styles.tabBar}>
-        <button onClick={() => setActiveTab('overview')} style={activeTab === 'overview' ? styles.tabActive : styles.tab}>🏠 ยอดขาย</button>
-        <button onClick={() => setActiveTab('orders')} style={activeTab === 'orders' ? styles.tabActive : styles.tab}>📦 ออเดอร์</button>
-        <button onClick={() => setActiveTab('menu')} style={activeTab === 'menu' ? styles.tabActive : styles.tab}>🍔 จัดการเมนู</button>
-        <button onClick={() => setActiveTab('riders')} style={activeTab === 'riders' ? styles.tabActive : styles.tab}>🛵 ไรเดอร์ ({pendingRiders.length})</button>
-      </div>
-
-      <main style={{ marginTop: '20px' }}>
-        
-        {/* TAB: สรุปยอดขาย */}
-        {activeTab === 'overview' && (
-          <div style={styles.statsGrid}>
-            <div style={{...styles.statCard, borderLeft: '5px solid #00ff00'}}><h4>ยอดวันนี้</h4><h2>฿{salesStats.daily.toLocaleString()}</h2></div>
-            <div style={{...styles.statCard, borderLeft: '5px solid #ffcc00'}}><h4>สัปดาห์นี้</h4><h2>฿{salesStats.weekly.toLocaleString()}</h2></div>
-            <div style={{...styles.statCard, borderLeft: '5px solid #ff6600'}}><h4>เดือนนี้</h4><h2>฿{salesStats.monthly.toLocaleString()}</h2></div>
-          </div>
-        )}
-
-        {/* TAB: จัดการออเดอร์ (ระบุไรเดอร์) */}
-        {activeTab === 'orders' && (
-          <div style={styles.listContainer}>
-            {orders.map(o => (
-              <div key={o.id} style={styles.orderCard}>
-                <div style={styles.rowBetween}>
-                  <b>ออเดอร์ #{o.id.slice(0,5)}</b>
-                  <span style={styles.badge(o.status)}>{o.status}</span>
-                </div>
-                <p style={{fontSize: '13px', margin: '5px 0'}}>📍 {o.address} | 💰 ฿{o.total_price}</p>
-                {o.status === 'pending' && (
-                  <div style={styles.assignRow}>
-                    <select id={`rider-${o.id}`} style={styles.select}>
-                      <option value="">-- เลือกไรเดอร์ --</option>
-                      {approvedRiders.map(r => <option key={r.id} value={r.id}>{r.email}</option>)}
-                    </select>
-                    <button onClick={() => assignOrder(o.id, document.getElementById(`rider-${o.id}`).value)} style={styles.btnSend}>ส่งงาน</button>
-                  </div>
+            <main>
+                {/* --- ส่วนที่ 1: ภาพรวม (Overview) --- */}
+                {activeTab === 'overview' && (
+                    <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                        <h3>ยินดีต้อนรับ แอดมิน</h3>
+                        <p style={{ color: '#888' }}>กรุณาเลือกเมนูเพื่อจัดการระบบ</p>
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
+                            <div style={st.statCard}>ออเดอร์: {orders.length}</div>
+                            <div style={st.statCard}>ไรเดอร์: {riders.length}</div>
+                        </div>
+                    </div>
                 )}
-                <button onClick={() => navigate(`/chat/${o.id}`)} style={styles.btnChat}>💬 เข้าห้องแชท</button>
-              </div>
-            ))}
-          </div>
-        )}
 
-        {/* TAB: จัดการเมนูอาหาร (เพิ่มชื่อ/ราคา/รูป) */}
-        {activeTab === 'menu' && (
-          <div>
-            <form onSubmit={handleAddMenu} style={styles.menuForm}>
-              <h3 style={{marginBottom: '10px'}}>➕ เพิ่มรายการอาหาร</h3>
-              <input placeholder="ชื่อเมนู" style={styles.input} value={menuForm.name} onChange={e=>setMenuForm({...menuForm, name: e.target.value})} required />
-              <input placeholder="ราคา (บาท)" type="number" style={styles.input} value={menuForm.price} onChange={e=>setMenuForm({...menuForm, price: e.target.value})} required />
-              <input placeholder="ลิงก์ URL รูปภาพ" style={styles.input} value={menuForm.image_url} onChange={e=>setMenuForm({...menuForm, image_url: e.target.value})} required />
-              <button type="submit" style={styles.btnPrimary}>ยืนยันเพิ่มเมนู</button>
-            </form>
+                {/* --- ส่วนที่ 2: ออเดอร์ (Orders) --- */}
+                {activeTab === 'orders' && (
+                    <div style={st.list}>
+                        <h4 style={{ color: '#f60' }}>📦 รายการออเดอร์ล่าสุด</h4>
+                        {orders.length === 0 ? <p style={st.emptyText}>ไม่มีรายการออเดอร์</p> : 
+                            orders.map(o => (
+                                <div key={o.id} style={st.itemCard}>
+                                    <div>
+                                        <b>ID: {o.id.slice(0,8)}</b>
+                                        <p style={{ fontSize: '12px', color: '#888' }}>ราคา: ฿{o.total_price}</p>
+                                    </div>
+                                    <button style={st.btnSmall}>ดูรายละเอียด</button>
+                                </div>
+                            ))
+                        }
+                    </div>
+                )}
 
-            <div style={styles.menuGrid}>
-              {menus.map(m => (
-                <div key={m.id} style={styles.menuItem}>
-                  <img src={m.image_url} style={styles.menuImg} alt={m.name} />
-                  <h4>{m.name}</h4>
-                  <p style={{color: '#ff6600'}}>฿{m.price}</p>
-                  <button onClick={() => deleteMenu(m.id)} style={styles.btnDelete}>ลบรายการ</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* TAB: อนุมัติไรเดอร์ */}
-        {activeTab === 'riders' && (
-          pendingRiders.map(r => (
-            <div key={r.id} style={styles.riderRow}>
-              <span>{r.email}</span>
-              <button onClick={() => approveRider(r.id)} style={styles.btnApprove}>✔️ อนุมัติ</button>
-            </div>
-          ))
-        )}
-
-      </main>
-    </div>
-  );
+                {/* --- ส่วนที่ 3: ไรเดอร์ (Riders) --- */}
+                {activeTab === 'riders' && (
+                    <div style={st.list}>
+                        <h4 style={{ color: '#f60', marginBottom: '15px' }}>🛵 รายชื่อผู้สมัครไรเดอร์</h4>
+                        {riders.length === 0 ? <p style={st.emptyText}>ไม่พบข้อมูลไรเดอร์ในระบบ</p> : 
+                            riders.map(r => (
+                                <div key={r.id} style={st.itemCard}>
+                                    <div>
+                                        <b style={{ color: '#fff' }}>👤 {r.username || r.email || 'ไม่ระบุชื่อ'}</b>
+                                        <p style={{ fontSize: '12px', color: '#888' }}>
+                                            สถานะ: {r.is_approved ? <span style={{color:'#4f4'}}>✅ อนุมัติแล้ว</span> : <span style={{color:'#f44'}}>⏳ รออนุมัติ</span>}
+                                        </p>
+                                    </div>
+                                    {!r.is_approved && (
+                                        <button onClick={() => handleApprove(r.id)} style={st.btnSmall}>อนุมัติ</button>
+                                    )}
+                                </div>
+                            ))
+                        }
+                    </div>
+                )}
+            </main>
+        </div>
+    );
 };
 
-// --- 4. Styles: ความสวยงามแบบ Dark Theme ---
-const styles = {
-  container: { backgroundColor: '#000', minHeight: '100vh', color: '#fff', padding: '20px', fontFamily: "'Kanit', sans-serif" },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #222', paddingBottom: '10px' },
-  tabBar: { display: 'flex', gap: '15px', marginTop: '20px', overflowX: 'auto', paddingBottom: '10px' },
-  tab: { background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '15px', padding: '10px' },
-  tabActive: { background: 'none', border: 'none', color: '#ff6600', borderBottom: '2px solid #ff6600', fontWeight: 'bold', fontSize: '15px', padding: '10px' },
-  
-  statsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' },
-  statCard: { backgroundColor: '#111', padding: '20px', borderRadius: '15px', textAlign: 'center' },
-  
-  orderCard: { backgroundColor: '#111', padding: '15px', borderRadius: '12px', marginBottom: '10px', border: '1px solid #222' },
-  rowBetween: { display: 'flex', justifyContent: 'space-between' },
-  badge: (s) => ({ backgroundColor: s === 'pending' ? '#ff6600' : s === 'shipping' ? '#007bff' : '#28a745', padding: '2px 8px', borderRadius: '5px', fontSize: '11px' }),
-  
-  menuForm: { backgroundColor: '#111', padding: '20px', borderRadius: '15px', marginBottom: '20px' },
-  input: { width: '100%', padding: '12px', marginBottom: '10px', backgroundColor: '#222', border: '1px solid #333', color: '#fff', borderRadius: '8px', boxSizing: 'border-box' },
-  menuGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '15px' },
-  menuItem: { backgroundColor: '#111', padding: '10px', borderRadius: '12px', textAlign: 'center', border: '1px solid #222' },
-  menuImg: { width: '100%', height: '100px', objectFit: 'cover', borderRadius: '8px', marginBottom: '8px' },
-  
-  btnPrimary: { width: '100%', padding: '12px', backgroundColor: '#ff6600', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
-  btnDelete: { marginTop: '5px', color: '#ff4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px' },
-  btnChat: { width: '100%', marginTop: '10px', backgroundColor: '#222', color: '#ff6600', border: '1px solid #ff6600', padding: '5px', borderRadius: '8px', cursor: 'pointer' },
-  btnSend: { backgroundColor: '#ff6600', color: '#fff', border: 'none', padding: '0 15px', borderRadius: '5px', cursor: 'pointer' },
-  
-  assignRow: { display: 'flex', gap: '10px', marginTop: '10px' },
-  select: { flex: 1, backgroundColor: '#222', color: '#fff', border: '1px solid #444', padding: '8px', borderRadius: '5px' },
-  riderRow: { display: 'flex', justifyContent: 'space-between', padding: '15px', backgroundColor: '#111', marginBottom: '10px', borderRadius: '10px' },
-  btnApprove: { backgroundColor: '#28a745', border: 'none', color: '#fff', padding: '5px 15px', borderRadius: '5px' },
-  logoutBtn: { background: 'none', border: '1px solid #444', color: '#888', padding: '5px 15px', borderRadius: '20px', cursor: 'pointer' }
+// สไตล์ CSS (จัดกลุ่มไว้ที่นี่ที่เดียว)
+const st = {
+    container: { background: '#000', color: '#fff', minHeight: '100vh', padding: '20px', fontFamily: 'Kanit, sans-serif' },
+    header: { display: 'flex', justifyContent: 'space-between', marginBottom: '20px', alignItems: 'center' },
+    tabBar: { display: 'flex', gap: '10px', marginBottom: '20px', overflowX: 'auto', paddingBottom: '10px' },
+    tab: { padding: '10px 20px', background: '#111', border: 'none', color: '#888', borderRadius: '30px', cursor: 'pointer', whiteSpace: 'nowrap' },
+    tabAct: { padding: '10px 20px', background: '#f60', border: 'none', color: '#fff', borderRadius: '30px', fontWeight: 'bold', whiteSpace: 'nowrap' },
+    list: { display: 'flex', flexDirection: 'column', gap: '10px' },
+    itemCard: { background: '#111', padding: '15px', borderRadius: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #222' },
+    btnSmall: { background: '#f60', color: '#fff', border: 'none', padding: '8px 15px', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' },
+    btnLogout: { background: '#222', border: 'none', color: '#888', padding: '8px 15px', borderRadius: '20px', cursor: 'pointer' },
+    loader: { height: '100vh', background: '#000', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' },
+    emptyText: { textAlign: 'center', color: '#888', marginTop: '20px' },
+    statCard: { background: '#111', padding: '15px 25px', borderRadius: '15px', border: '1px solid #222', color: '#f60', fontWeight: 'bold' }
 };
 
 export default AdminDashboard;

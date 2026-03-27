@@ -1,187 +1,127 @@
-import React, { useEffect, useState } from 'react';
-import { supabase } from './supabase';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from './supabase'; 
+import { toast, Toaster } from 'react-hot-toast';
 
-const Rider = () => {
-  const [activeJobs, setActiveJobs] = useState([]); // งานที่แอดมินส่งมาให้ (กำลังส่ง)
-  const [history, setHistory] = useState([]);       // ประวัติงานที่สำเร็จแล้ว
-  const [todayStats, setTodayStats] = useState({ count: 0, earnings: 0 });
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+const RiderDashboard = () => {
+    const [orders, setOrders] = useState([]);
+    const [isOnline, setIsOnline] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState(null);
 
-  // 1. เริ่มต้นระบบ
-  useEffect(() => {
-    const initRider = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setUser(user);
-        fetchRiderData(user.id);
+    // 1. ฟังก์ชันดึงข้อมูลไรเดอร์และงานที่ได้รับ
+    const fetchMyJobs = useCallback(async () => {
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            setUser(user);
 
-        // ฟังการอัปเดต Realtime (เมื่อแอดมินกดส่งงานมา งานต้องเด้งทันที)
-        const channel = supabase.channel('rider-live')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-            fetchRiderData(user.id);
-          }).subscribe();
+            // ดึงสถานะออนไลน์ล่าสุดจาก DB
+            const { data: userData } = await supabase.from('users').select('is_online').eq('id', user.id).single();
+            if (userData) setIsOnline(userData.is_online);
 
+            // ดึงออเดอร์ที่ 'rider_id' ตรงกับเรา และสถานะไม่ใช่ 'completed'
+            const { data, error } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('rider_id', user.id)
+                .neq('status', 'completed')
+                .order('created_at', { ascending: false });
+
+            if (error) throw error;
+            setOrders(data || []);
+        } catch (error) {
+            console.error("Rider Fetch Error:", error.message);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchMyJobs();
+        // ระบบ Real-time: เวลามีแอดมินจ่ายงานให้ ข้อมูลจะเด้งทันที
+        const channel = supabase.channel('rider-updates')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchMyJobs)
+            .subscribe();
         return () => supabase.removeChannel(channel);
-      }
+    }, [fetchMyJobs]);
+
+    // 2. ฟังก์ชันเปิด-ปิดรับงาน (อัปเดตลงตาราง users)
+    const toggleOnline = async () => {
+        const newStatus = !isOnline;
+        const { error } = await supabase.from('users').update({ is_online: newStatus }).eq('id', user.id);
+        if (!error) {
+            setIsOnline(newStatus);
+            toast.success(newStatus ? "🟢 ออนไลน์ พร้อมรับงานแล้ว" : "⚪ ออฟไลน์ พักผ่อนได้");
+        }
     };
-    initRider();
-  }, []);
 
-  // 2. ดึงข้อมูลงาน (เฉพาะที่ Assign ให้เรา)
-  const fetchRiderData = async (riderId) => {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('rider_id', riderId) // ดึงเฉพาะงานที่มีชื่อเรา
-      .order('created_at', { ascending: false });
+    // 3. 💥 ฟังก์ชัน Logout (หัวใจสำคัญที่เพื่อนต้องการ)
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        toast.success("ออกจากระบบไรเดอร์แล้ว");
+        // หลังจากบรรทัดนี้ ระบบใน App.jsx จะดีดคุณกลับหน้า Login เองอัตโนมัติครับ
+    };
 
-    if (!error) {
-      // แยกประเภทงาน
-      const active = data.filter(o => o.status === 'shipping');
-      const finished = data.filter(o => o.status === 'completed');
-      
-      setActiveJobs(active);
-      setHistory(finished);
+    if (loading) return <div style={st.loader}>⌛ กำลังเปิดระบบไรเดอร์...</div>;
 
-      // คำนวณสถิติวันนี้
-      const today = new Date().toISOString().split('T')[0];
-      const todayJobs = finished.filter(o => o.created_at.startsWith(today));
-      setTodayStats({
-        count: todayJobs.length,
-        earnings: todayJobs.reduce((sum, o) => sum + (o.total_price || 0), 0)
-      });
-    }
-    setLoading(false);
-  };
-
-  // 3. ฟังก์ชันปิดงาน (ส่งสำเร็จ)
-  const handleCompleteOrder = async (orderId) => {
-    if (window.confirm("ยืนยันว่าส่งอาหารสำเร็จแล้วใช่หรือไม่?")) {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: 'completed' })
-        .eq('id', orderId);
-
-      if (!error) {
-        alert("🎉 ปิดงานสำเร็จ! เก่งมากครับ");
-        fetchRiderData(user.id);
-      }
-    }
-  };
-
-  // 4. ฟังก์ชันนำทาง GPS
-  const openNavigation = (lat, lng) => {
-    if (!lat || !lng) return alert("ขออภัย ลูกค้าไม่ได้ระบุพิกัด GPS");
-    window.open(`https://www.google.com{lat},${lng}`, '_blank');
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate('/login');
-  };
-
-  if (loading) return <div style={styles.loading}>กำลังโหลดข้อมูลไรเดอร์...</div>;
-
-  return (
-    <div style={styles.container}>
-      {/* Header */}
-      <header style={styles.header}>
-        <div>
-          <h2 style={{ color: '#ff6600', margin: 0 }}>🛵 Rider Dashboard</h2>
-          <small style={{ color: '#666' }}>Rider: {user?.email}</small>
-        </div>
-        <button onClick={handleLogout} style={styles.logoutBtn}>ออกจากระบบ</button>
-      </header>
-
-      {/* สรุปงานวันนี้ */}
-      <div style={styles.statsRow}>
-        <div style={styles.statCard}>
-          <small style={{ color: '#888' }}>งานสำเร็จวันนี้</small>
-          <h2 style={{ color: '#ff6600', margin: '5px 0' }}>{todayStats.count}</h2>
-        </div>
-        <div style={styles.statCard}>
-          <small style={{ color: '#888' }}>ยอดเงินวันนี้</small>
-          <h2 style={{ color: '#00ff00', margin: '5px 0' }}>฿{todayStats.earnings}</h2>
-        </div>
-      </div>
-
-      {/* --- ส่วนที่ 1: งานปัจจุบัน (แอดมินส่งมาให้) --- */}
-      <section style={{ marginBottom: '40px' }}>
-        <h3 style={styles.sectionTitle}>📦 งานที่ต้องจัดส่ง ({activeJobs.length})</h3>
-        {activeJobs.length === 0 ? (
-          <div style={styles.emptyCard}>ยังไม่มีงานใหม่ที่ได้รับมอบหมาย</div>
-        ) : (
-          activeJobs.map(job => (
-            <div key={job.id} style={styles.activeCard}>
-              <div style={styles.cardHeader}>
-                <span>ID: #{job.id.slice(0, 8)}</span>
-                <span style={styles.priceTag}>฿{job.total_price}</span>
-              </div>
-              
-              <div style={styles.infoBox}>
-                <p>📍 <b>ที่อยู่:</b> {job.address || 'ชุมชนใกล้เคียง'}</p>
-                <p>📝 <b>สถานะ:</b> <span style={{color: '#ffcc00'}}>กำลังจัดส่ง</span></p>
-              </div>
-
-              <div style={styles.btnGrid}>
-                <button onClick={() => navigate(`/chat/${job.id}`)} style={styles.chatBtn}>💬 แชท</button>
-                <button onClick={() => openNavigation(job.lat, job.lng)} style={styles.navBtn}>🗺️ นำทาง</button>
-              </div>
-              
-              <button onClick={() => handleCompleteOrder(job.id)} style={styles.completeBtn}>✅ ส่งสำเร็จ / ปิดงาน</button>
-            </div>
-          ))
-        )}
-      </section>
-
-      {/* --- ส่วนที่ 2: ประวัติงานย้อนหลัง --- */}
-      <section>
-        <h3 style={styles.sectionTitle}>🕒 ประวัติงานล่าสุด</h3>
-        <div style={styles.historyList}>
-          {history.length === 0 ? <p style={{color: '#444', textAlign: 'center'}}>ยังไม่มีประวัติงาน</p> : 
-            history.slice(0, 5).map(h => (
-              <div key={h.id} style={styles.historyItem}>
+    return (
+        <div style={st.container}>
+            <Toaster position="top-center" />
+            
+            {/* --- ส่วนหัว RIDER PRO --- */}
+            <header style={st.header}>
                 <div>
-                  <p style={{ margin: 0 }}>#{h.id.slice(0, 5)} - {h.address}</p>
-                  <small style={{ color: '#555' }}>{new Date(h.created_at).toLocaleString()}</small>
+                    <h2 style={{ margin: 0, color: '#f60' }}>🛵 RIDER PRO</h2>
+                    <span style={{ fontSize: '12px', color: '#888' }}>{user?.email}</span>
                 </div>
-                <div style={{ color: '#00ff00', fontWeight: 'bold' }}>+฿{h.total_price}</div>
-              </div>
-            ))
-          }
+                <button onClick={handleLogout} style={st.btnOut}>Logout</button>
+            </header>
+
+            {/* แผงควบคุมสถานะ */}
+            <div style={st.statusCard}>
+                <h3 style={{ marginTop: 0 }}>สถานะการรับงาน</h3>
+                <button 
+                    onClick={toggleOnline} 
+                    style={{ ...st.btnToggle, background: isOnline ? '#00c853' : '#444' }}
+                >
+                    {isOnline ? 'พร้อมส่งอาหาร (Online)' : 'ปิดรับงาน (Offline)'}
+                </button>
+            </div>
+
+            {/* รายการงานที่ต้องส่ง */}
+            <main style={{ marginTop: '25px' }}>
+                <h4 style={{ marginBottom: '15px', color: '#f60' }}>📦 งานที่ต้องจัดส่ง ({orders.length})</h4>
+                {orders.length === 0 ? (
+                    <div style={st.emptyState}>ยังไม่มีงานใหม่ในขณะนี้</div>
+                ) : (
+                    orders.map(order => (
+                        <div key={order.id} style={st.orderCard}>
+                            <div style={{ flex: 1 }}>
+                                <b>ออเดอร์ #{order.id.slice(0, 5)}</b>
+                                <p style={{ fontSize: '13px', color: '#aaa', margin: '5px 0' }}>📍 {order.address}</p>
+                                <div style={st.badge}>{order.status}</div>
+                            </div>
+                            <button style={st.btnGo} onClick={() => toast("ฟังก์ชันนำทางกำลังมา...")}>นำทาง</button>
+                        </div>
+                    ))
+                )}
+            </main>
         </div>
-      </section>
-    </div>
-  );
+    );
 };
 
-// --- Styles (Professional Dark Theme) ---
-const styles = {
-  container: { backgroundColor: '#000', minHeight: '100vh', color: '#fff', padding: '20px', fontFamily: "'Kanit', sans-serif" },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid #222', paddingBottom: '15px' },
-  logoutBtn: { background: 'none', border: '1px solid #333', color: '#666', padding: '6px 15px', borderRadius: '20px', cursor: 'pointer' },
-  loading: { backgroundColor: '#000', color: '#ff6600', height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' },
-  
-  statsRow: { display: 'flex', gap: '10px', marginBottom: '30px' },
-  statCard: { flex: 1, backgroundColor: '#111', padding: '15px', borderRadius: '15px', border: '1px solid #222', textAlign: 'center' },
-
-  sectionTitle: { borderLeft: '4px solid #ff6600', paddingLeft: '12px', fontSize: '18px', marginBottom: '15px' },
-  activeCard: { backgroundColor: '#111', padding: '20px', borderRadius: '20px', border: '1px solid #ff6600', marginBottom: '20px' },
-  cardHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: '15px' },
-  priceTag: { backgroundColor: '#ff6600', color: '#fff', padding: '2px 10px', borderRadius: '8px', fontWeight: 'bold' },
-  infoBox: { backgroundColor: '#1a1a1a', padding: '12px', borderRadius: '10px', marginBottom: '15px', fontSize: '14px' },
-  
-  btnGrid: { display: 'flex', gap: '10px', marginBottom: '10px' },
-  chatBtn: { flex: 1, padding: '10px', backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' },
-  navBtn: { flex: 1, padding: '10px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' },
-  completeBtn: { width: '100%', padding: '12px', backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
-
-  emptyCard: { textAlign: 'center', padding: '30px', color: '#444', backgroundColor: '#111', borderRadius: '15px', border: '1px dashed #333' },
-  historyList: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  historyItem: { backgroundColor: '#111', padding: '15px', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #222' }
+// --- สไตล์แบบ Dark Mode ปี 2026 ---
+const st = {
+    container: { background: '#000', color: '#fff', minHeight: '100vh', padding: '20px', fontFamily: 'Kanit, sans-serif' },
+    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid #222', paddingBottom: '15px' },
+    btnOut: { background: 'none', border: '1px solid #333', color: '#888', padding: '6px 15px', borderRadius: '20px', cursor: 'pointer' },
+    statusCard: { background: '#111', padding: '20px', borderRadius: '20px', border: '1px solid #222', textAlign: 'center' },
+    btnToggle: { width: '100%', padding: '15px', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer', transition: '0.3s' },
+    orderCard: { background: '#111', padding: '15px', borderRadius: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderLeft: '5px solid #f60' },
+    badge: { display: 'inline-block', background: '#222', padding: '2px 8px', borderRadius: '5px', fontSize: '11px', color: '#f60', marginTop: '5px' },
+    btnGo: { background: '#f60', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer' },
+    emptyState: { textAlign: 'center', padding: '40px', color: '#555', border: '1px dashed #222', borderRadius: '15px' },
+    loader: { height: '100vh', background: '#000', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' }
 };
 
-export default Rider;
+export default RiderDashboard;
