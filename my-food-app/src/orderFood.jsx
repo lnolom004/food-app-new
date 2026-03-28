@@ -1,48 +1,55 @@
-// ... (ส่วนการ Import และ Fetch ข้อมูลเมนูเหมือนเดิม) ...
+import React, { useState } from 'react';
+import { supabase } from './supabase.jsx'; 
+import { useNavigate } from 'react-router-dom';
+import { toast, Toaster } from 'react-hot-toast';
 
-const [payMethod, setPayMethod] = useState('cash'); // 👈 เพิ่ม State วิธีจ่ายเงิน
+const OrderFood = () => {
+    const navigate = useNavigate();
 
-const handleOrder = async () => {
-    if (cart.length === 0 || !addr.trim()) return toast.error("ข้อมูลไม่ครบ");
-    
-    // ขอพิกัด GPS เพื่อความแม่นยำ
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-        try {
-            const { data: { user } } = await supabase.auth.getUser();
+    // ข้อมูลจำลอง (Mock Data) เพื่อให้หน้าจอไม่ว่างเปล่าตอนเริ่ม
+    const mockMenus = [
+        { id: 1, name: 'ข้าวกะเพราไก่', price: 50, image_url: 'https://via.placeholder.com' },
+        { id: 2, name: 'ข้าวผัดหมู', price: 45, image_url: 'https://via.placeholder.com' },
+        { id: 3, name: 'น้ำเปล่า', price: 10, image_url: 'https://via.placeholder.com' }
+    ];
+
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+        navigate('/login');
+    };
+
+    return (
+        <div style={{ background: '#000', color: '#fff', minHeight: '100vh', padding: '20px', fontFamily: 'sans-serif' }}>
+            <Toaster position="top-center" />
             
-            const orderData = {
-                user_id: user.id,
-                items: cart,
-                total_price: totalPrice,
-                address: addr.trim(),
-                note: note.trim(),
-                lat: pos.coords.latitude,   
-                lng: pos.coords.longitude,  
-                status: 'pending',
-                payment_method: payMethod, // 👈 ส่งค่า 'cash' หรือ 'transfer' ไปที่ DB
-                payment_status: 'waiting'
-            };
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+                <h2 style={{ color: '#f60', margin: 0 }}>🍴 FOODAPP 2026</h2>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                    <button onClick={() => navigate('/myorders')} style={{ background: '#222', border: 'none', color: '#fff', padding: '8px 15px', borderRadius: '10px', cursor: 'pointer' }}>ประวัติการสั่ง</button>
+                    <button onClick={handleLogout} style={{ background: '#f44336', border: 'none', color: '#fff', padding: '8px 15px', borderRadius: '10px', cursor: 'pointer' }}>Logout</button>
+                </div>
+            </header>
 
-            const { error } = await supabase.from('orders').insert([orderData]);
-            if (error) throw error;
+            <div style={{ textAlign: 'center', marginBottom: '30px', padding: '40px', background: '#111', borderRadius: '20px', border: '1px solid #333' }}>
+                <h1 style={{ color: '#f60' }}>ยินดีต้อนรับสู่หน้าร้านค้า!</h1>
+                <p style={{ color: '#888' }}>ขณะนี้ระบบเชื่อมต่อสำเร็จแล้ว แต่ยังไม่มีรายการอาหารจริงแสดงผล</p>
+            </div>
 
-            toast.success("สั่งอาหารสำเร็จ! เตรียมชำระเงินปลายทางนะครับ");
-            navigate('/myorders'); 
-        } catch (err) { toast.error("สั่งซื้อล้มเหลว"); }
-    });
+            {/* แสดงรายการอาหารจำลองเพื่อเช็คว่าหน้าจอทำงานได้ */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '15px' }}>
+                {mockMenus.map(f => (
+                    <div key={f.id} style={{ background: '#111', borderRadius: '15px', overflow: 'hidden', border: '1px solid #222', padding: '10px' }}>
+                        <img src={f.image_url} alt={f.name} style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '10px' }} />
+                        <div style={{ marginTop: '10px' }}>
+                            <b style={{ fontSize: '14px' }}>{f.name}</b>
+                            <p style={{ color: '#f60', margin: '5px 0' }}>฿{f.price}</p>
+                            <button onClick={() => toast.success("เพิ่มลงตะกร้า (ตัวอย่าง)")} style={{ width: '100%', background: '#f60', border: 'none', color: '#fff', padding: '5px', borderRadius: '5px', cursor: 'pointer' }}>เพิ่มลงตะกร้า</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 };
 
-// --- ส่วน UI ใน Return ก่อนปุ่มสั่งซื้อ ---
-<div style={{ marginBottom: '15px' }}>
-    <p style={{ fontSize: '14px', color: '#888' }}>💳 เลือกวิธีชำระเงินปลายทาง:</p>
-    <div style={{ display: 'flex', gap: '10px', marginTop: '5px' }}>
-        <button 
-            onClick={() => setPayMethod('cash')} 
-            style={payMethod === 'cash' ? st.tabAct : st.tab}
-        >💵 เงินสด</button>
-        <button 
-            onClick={() => setPayMethod('transfer')} 
-            style={payMethod === 'transfer' ? st.tabAct : st.tab}
-        >📱 โอนจ่าย</button>
-    </div>
-</div>
+export default OrderFood;
