@@ -16,29 +16,36 @@ export default function App() {
     const [role, setRole] = useState(null);
     const [loading, setLoading] = useState(true);
 
-    const checkUserRole = async (sessionUser) => {
-        if (!sessionUser) {
-            setRole(null);
-            setLoading(false);
-            return;
-        }
-        try {
-            const { data, error } = await supabase
-                .from('users')
-                .select('role')
-                .eq('id', sessionUser.id)
-                .single();
-            
-            if (data) {
-                setRole(data.role); // จะได้ค่า 'customer', 'admin', หรือ 'rider'
-            }
-        } catch (e) {
-            console.error("Role error:", e);
+  const checkUserRole = async (sessionUser) => {
+    if (!sessionUser) {
+        setLoading(false);
+        return;
+    }
+    try {
+        console.log("--- เริ่มเช็ค Role สำหรับ ID:", sessionUser.id);
+        
+        const { data, error } = await supabase
+            .from('users')
+            .select('role')
+            .eq('id', sessionUser.id)
+            .single();
+        
+        if (error) {
+            console.error("Supabase Error:", error.message);
+            // 💡 จุดสำคัญ: ถ้าดึงข้อมูลไม่ได้ ให้บังคับเป็น customer ไปเลย ไม่ต้องค้างหน้าโหลด
             setRole('customer'); 
-        } finally {
-            setLoading(false); 
+        } else {
+            console.log("ดึง Role สำเร็จ:", data?.role);
+            setRole(data?.role || 'customer');
         }
-    };
+    } catch (e) {
+        console.error("Critical Runtime Error:", e);
+        setRole('customer');
+    } finally {
+        // 💡 จุดตาย: ต้องมั่นใจว่า setLoading(false) จะทำงานเสมอไม่ว่าจะเกิดอะไรขึ้น
+        setTimeout(() => setLoading(false), 500); 
+    }
+};
 
     useEffect(() => {
         const init = async () => {
