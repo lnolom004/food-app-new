@@ -3,13 +3,13 @@ import { supabase } from './supabase.jsx';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
-// 🛡️ แก้ไขการ Import ให้ตรงตามชื่อไฟล์ในรูปเป๊ะๆ (o ตัวเล็ก / m ตัวเล็ก)
+// 🛡️ แก้ไขการ Import ให้ตรงตามชื่อไฟล์ในรูปเป๊ะๆ
 import Login from './Login.jsx'; 
 import Register from './Register.jsx';
 import AdminDashboard from './admin.jsx';   
 import OrderFood from './orderFood.jsx';     
 import RiderDashboard from './rider.jsx';   
-import MyOrders from './myorders.jsx'; // <--- เปลี่ยนให้ตรงตามรูปที่เป็น m ตัวเล็ก
+import MyOrders from './myorders.jsx'; 
 
 export default function App() {
     const [user, setUser] = useState(null);
@@ -31,6 +31,7 @@ export default function App() {
                 .single();
             
             if (data) {
+                // เก็บค่า Role ตรงๆ จาก DB (เช่น 'customer', 'admin', 'rider')
                 setRole(data.role);
                 setIsApproved(!!data.is_approved);
             } else {
@@ -68,7 +69,10 @@ export default function App() {
 
     if (loading) return (
         <div style={{ background: '#000', height: '100vh', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center', fontFamily: 'sans-serif' }}>
-            <h2>⌛ กำลังยืนยันตัวตน...</h2>
+            <div style={{ textAlign: 'center' }}>
+                <h2>⌛ กำลังยืนยันตัวตน...</h2>
+                <p style={{ color: '#666' }}>กรุณารอสักครู่</p>
+            </div>
         </div>
     );
 
@@ -98,16 +102,20 @@ export default function App() {
                         
                         {role === 'customer' && (
                             <>
-                                {/* 💡 รองรับทุกลิ้งค์ที่เป็นไปได้เพื่อให้เข้าหน้าเมนูได้ชัวร์ */}
+                                {/* 💡 รองรับทุกลิ้งค์เพื่อให้เข้าหน้าเมนูได้ชัวร์ */}
                                 <Route path="/menu" element={<OrderFood />} />
                                 <Route path="/order" element={<OrderFood />} /> 
-                                <Route path="/orderFood" element={<OrderFood />} /> 
                                 <Route path="/myorders" element={<MyOrders />} /> 
                             </>
                         )}
                         
-                        {/* 💡 ตัวดักสุดท้าย ถ้าล็อคอินแล้วแต่ไปไหนไม่ถูก ให้ส่งไปหน้า /menu */}
-                        <Route path="*" element={<Navigate to="/menu" replace />} />
+                        {/* 💡 ตัวดักสุดท้าย ถ้าล็อคอินแล้วแต่ไปไหนไม่ถูก ให้ส่งไปหน้าเริ่มต้นตามสิทธิ์ */}
+                        <Route path="*" element={
+                            <Navigate to={
+                                role === 'admin' ? "/admin" : 
+                                role === 'rider' ? "/rider" : "/menu"
+                            } replace />
+                        } />
                     </>
                 )}
             </Routes>
