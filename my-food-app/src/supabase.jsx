@@ -1,8 +1,7 @@
-// supabase.jsx
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
 
-// ✅ ต้องเป็น import.meta.env เท่านั้น (ไม่ใช่ process.env)
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+// เชื่อมต่อตรงไปที่โปรเจกต์ Inolom004
+const supabaseUrl = 'https://xjlfyebokojtviztzmeh.supabase.co';
+const supabaseAnonKey = 'sb_publishable_C_blxojGGDxAK9SSN06OHQ_cz0PW_lf';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
