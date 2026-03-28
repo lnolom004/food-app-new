@@ -3,13 +3,13 @@ import { supabase } from './supabase.jsx';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
-// 🛡️ เช็คชื่อไฟล์ให้เป็นตัวเล็กตามที่ปรากฏใน Folder ของนายเป๊ะๆ
+// 🛡️ เช็คตัวพิมพ์เล็ก-ใหญ่ให้ตรงกับที่ปรากฏในเครื่องเป๊ะๆ
 import Login from './Login.jsx'; 
 import Register from './Register.jsx';
 import AdminDashboard from './admin.jsx';   
-import OrderFood from './orderFood.jsx'; // o ตัวเล็ก    
+import OrderFood from './orderFood.jsx'; // o ตัวเล็ก
 import RiderDashboard from './rider.jsx';   
-import MyOrders from './myorders.jsx'; // m ตัวเล็ก     
+import MyOrders from './myorders.jsx';   // m ตัวเล็ก
 
 export default function App() {
     const [user, setUser] = useState(null);
@@ -17,12 +17,8 @@ export default function App() {
     const [loading, setLoading] = useState(true);
 
     const checkUserRole = async (sessionUser) => {
-        if (!sessionUser) {
-            setRole(null);
-            setLoading(false);
-            return;
-        }
         try {
+            if (!sessionUser) throw new Error("No user");
             const { data, error } = await supabase
                 .from('users')
                 .select('role')
@@ -30,25 +26,28 @@ export default function App() {
                 .single();
             
             if (data) {
-                setRole(data.role); // จะได้ค่า 'customer' จาก DB ของนาย
+                setRole(data.role);
             } else {
-                setRole('customer'); // Default ป้องกันจอขาว
+                setRole('customer'); 
             }
         } catch (e) {
-            console.error("Role Error:", e);
-            setRole('customer'); 
+            console.error("Auth error:", e);
+            setRole('customer');
         } finally {
-            setLoading(false); // ✅ สั่งหยุดโหลดแน่นอน
+            setLoading(false);
         }
     };
 
     useEffect(() => {
+        // ใช้ getUser() แทน getSession() เพื่อความชัวร์บน Vercel
         const init = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            const u = session?.user ?? null;
-            setUser(u);
-            if (u) await checkUserRole(u);
-            else setLoading(false);
+            const { data: { user: currentUser } } = await supabase.auth.getUser();
+            setUser(currentUser);
+            if (currentUser) {
+                await checkUserRole(currentUser);
+            } else {
+                setLoading(false);
+            }
         };
         init();
 
@@ -64,7 +63,7 @@ export default function App() {
         return () => subscription.unsubscribe();
     }, []);
 
-    // 🛡️ ถ้ายังขาวโพลน ให้ลองเอา block นี้ออกชั่วคราวเพื่อดู Error จริง
+    // 🛡️ ถ้ายังขาว ให้เอา Loading ออกชั่วคราวเพื่อหาจุดเสีย
     if (loading) return (
         <div style={{ background: '#000', height: '100vh', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <h2>⌛ ระบบกำลังยืนยันตัวตน...</h2>
@@ -86,7 +85,7 @@ export default function App() {
                         {role === 'admin' && <Route path="/admin" element={<AdminDashboard />} />}
                         {role === 'rider' && <Route path="/rider" element={<RiderDashboard />} />}
                         
-                        {/* 🛡️ รองรับทั้งพาร์ท /menu และ /order เพื่อกันเหนื่อย */}
+                        {/* 🛡️ รองรับทุกลิ้งค์เพื่อให้เข้าหน้าเมนูได้ชัวร์ */}
                         {role === 'customer' && (
                             <>
                                 <Route path="/menu" element={<OrderFood />} />
@@ -95,8 +94,8 @@ export default function App() {
                             </>
                         )}
                         
-                        {/* 💡 ตัวดักหน้าว่าง (Fallback): ถ้าหาไม่เจอ ให้ส่งไปหน้าเริ่มต้นตามสิทธิ์ */}
-                        <Route path="*" element={<Navigate to={role === 'admin' ? "/admin" : role === 'rider' ? "/rider" : "/menu"} replace />} />
+                        {/* 💡 ตัวดักสุดท้าย ถ้าหา Path ไม่เจอ ให้ส่งไป Login เสมอ กันจอขาว */}
+                        <Route path="*" element={<Navigate to="/login" replace />} />
                     </>
                 )}
             </Routes>
