@@ -3,12 +3,13 @@ import { supabase } from './supabase.jsx';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
+// 🛡️ เช็คชื่อไฟล์: ต้องเป็นตัวเล็กตามที่ปรากฏในเครื่องเป๊ะๆ (o ตัวเล็ก, m ตัวเล็ก)
 import Login from './Login.jsx'; 
 import Register from './Register.jsx';
 import AdminDashboard from './admin.jsx';   
-import OrderFood from './orderFood.jsx';     
+import OrderFood from './orderFood.jsx'; // 👈 o ตัวเล็ก     
 import RiderDashboard from './rider.jsx';   
-import MyOrders from './myorders.jsx';      
+import MyOrders from './myorders.jsx';   // 👈 m ตัวเล็ก     
 
 export default function App() {
     const [user, setUser] = useState(null);
@@ -19,7 +20,7 @@ export default function App() {
         if (!sessionUser) { setLoading(false); return; }
         try {
             const { data } = await supabase.from('users').select('role').eq('id', sessionUser.id).single();
-            setRole(data?.role || 'customer');
+            setRole(data?.role || 'customer'); // 👈 ใช้ 'customer' ตามใน DB ของคุณ
         } catch (e) { setRole('customer'); }
         finally { setLoading(false); }
     };
@@ -60,6 +61,7 @@ export default function App() {
                     <>
                         {role === 'admin' && <Route path="/admin" element={<AdminDashboard />} />}
                         {role === 'rider' && <Route path="/rider" element={<RiderDashboard />} />}
+                        {/* 🛡️ รองรับทั้ง /menu และ /order เพื่อกันจอขาว */}
                         {role === 'customer' && (
                             <>
                                 <Route path="/menu" element={<OrderFood />} />
