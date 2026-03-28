@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// เชื่อมต่อตรงไปที่โปรเจกต์ Inolom004
-const supabaseUrl = 'https://xjlfyebokojtviztzmeh.supabase.co';
-const supabaseAnonKey = 'sb_publishable_C_blxojGGDxAK9SSN06OHQ_cz0PW_lf';
+// 🌟 เรียกใช้ผ่านตัวแปรนี้เพื่อให้รันได้ทั้งในเครื่องและ Vercel
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

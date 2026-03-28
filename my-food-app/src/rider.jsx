@@ -1,199 +1,188 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabase'; 
+import { useNavigate } from 'react-router-dom';
 import { toast, Toaster } from 'react-hot-toast';
 
 const RiderDashboard = () => {
-    const [availableJobs, setAvailableJobs] = useState([]); 
-    const [myActiveJobs, setMyActiveJobs] = useState([]);   
-    const [history, setHistory] = useState([]);             
-    const [isOnline, setIsOnline] = useState(false);
-    const [user, setUser] = useState(null);
+    const [availableJobs, setAvailableJobs] = useState([]); // รายการงานว่าง
+    const [myJob, setMyJob] = useState(null); // งานที่เรากำลังทำ (ถ้ามี ข้อมูลจะเด้งมาหน้านี้)
     const [loading, setLoading] = useState(true);
+    const [user, setUser] = useState(null);
+    const navigate = useNavigate();
 
-    // --- ส่วนของระบบแชท ---
-    const [showChat, setShowChat] = useState(false);
-    const [currentOrder, setCurrentOrder] = useState(null);
-    const [messages, setMessages] = useState([]);
-    const [newMessage, setNewMessage] = useState('');
-
-    const fetchJobs = useCallback(async () => {
+    // --- 📥 1. ฟังก์ชันดึงข้อมูลงาน (แยกส่วนงานว่าง กับ งานของเรา) ---
+    const fetchJobs = useCallback(async (currentUser) => {
+        if (!currentUser) return;
+        setLoading(true);
         try {
-            const { data: { user: authUser } } = await supabase.auth.getUser();
-            if (!authUser) return;
-            setUser(authUser);
-
-            const { data: u } = await supabase.from('users').select('is_online').eq('id', authUser.id).single();
-            if (u) setIsOnline(u.is_online);
-
-            // ก. งานใหม่ (แอดมินรับแล้ว ยังไม่มีไรเดอร์)
-            const { data: newJobs } = await supabase
+            // ดึงงานใหม่ที่สถานะเป็น 'shipping' และยังไม่มีใครรับ (rider_id เป็น null)
+            const { data: available, error: err1 } = await supabase
                 .from('orders')
-                .select(`*, customer:users!user_id(username, phone_number)`)
-                .eq('status', 'shipping').is('rider_id', null);
-            setAvailableJobs(newJobs || []);
+                .select('*')
+                .eq('status', 'shipping') 
+                .is('rider_id', null) 
+                .order('created_at', { ascending: false });
 
-            // ข. งานที่เรากำลังส่ง (สูงสุด 3 งาน)
-            const { data: actives } = await supabase
+            if (err1) throw err1;
+            setAvailableJobs(available || []);
+
+            // เช็กงานปัจจุบันที่ไรเดอร์คนนี้กดรับมาแล้วแต่ยังส่งไม่เสร็จ
+            const { data: current, error: err2 } = await supabase
                 .from('orders')
-                .select(`*, customer:users!user_id(username, phone_number)`)
-                .eq('rider_id', authUser.id).eq('status', 'shipping');
-            setMyActiveJobs(actives || []);
-
-            // ค. ประวัติล่าสุด
-            const { data: hist } = await supabase.from('orders').select('*').eq('rider_id', authUser.id).eq('status', 'completed').limit(10).order('created_at', { ascending: false });
-            setHistory(hist || []);
-
-        } catch (error) { console.error(error); } finally { setLoading(false); }
+                .select('*')
+                .eq('rider_id', currentUser.id)
+                .neq('status', 'completed')
+                .maybeSingle(); 
+            
+            if (err2) throw err2;
+            setMyJob(current || null); // 🌟 ถ้ามีงาน ข้อมูลจะถูกเก็บใน myJob ทันที
+        } catch (e) {
+            console.error("Fetch Error:", e.message);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
+    // --- 🔄 2. ระบบตรวจสอบ Auth และ Real-time (ทำให้งาน "เด้ง" อัตโนมัติ) ---
     useEffect(() => {
-        fetchJobs();
-        const channel = supabase.channel('rider-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, fetchJobs).subscribe();
-        return () => supabase.removeChannel(channel);
-    }, [fetchJobs]);
+        const initRider = async () => {
+            const { data: { user: u } } = await supabase.auth.getUser();
+            if (!u) {
+                navigate('/login');
+                return;
+            }
+            setUser(u);
+            fetchJobs(u);
+        };
 
-    // 1. ✅ ฟังก์ชันรับงาน (จำกัด 3 งาน)
-    const handleAccept = async (orderId) => {
-        if (!isOnline) return toast.error("กรุณาเปิดระบบ Online ก่อนครับ");
-        if (myActiveJobs.length >= 3) return toast.error("คุณรับงานเต็มโควตาแล้ว (สูงสุด 3 งาน)");
+        initRider();
 
-        const { error } = await supabase.from('orders').update({ rider_id: user.id }).eq('id', orderId);
-        if (!error) { toast.success("รับงานสำเร็จ!"); fetchJobs(); }
+        // 📡 ตั้งค่า Real-time: ใครอัปเดตอะไรในตาราง orders หน้าจอเราจะเปลี่ยนตามทันที
+        const channel = supabase.channel('rider-realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+                supabase.auth.getUser().then(({ data }) => {
+                    if (data?.user) fetchJobs(data.user);
+                });
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [fetchJobs, navigate]);
+
+    // --- 🏍️ 3. ฟังก์ชัน "กดรับงาน" (หัวใจหลักที่ทำให้งานเด้งสลับหน้า) ---
+    const acceptJob = async (id) => {
+        if (!user) return toast.error("รอกำลังโหลดข้อมูลผู้ใช้...");
+        if (myJob) return toast.error("คุณมีงานค้างอยู่! ส่งงานเก่าให้เสร็จก่อน");
+        
+        // 1. อัปเดต rider_id ใน Database เป็น ID ของเรา
+        const { error } = await supabase
+            .from('orders')
+            .update({ rider_id: user.id })
+            .eq('id', id)
+            .is('rider_id', null); // 🛡️ ป้องกันกรณีโดนแย่งงานในเสี้ยววินาที
+
+        if (!error) {
+            toast.success("รับงานสำเร็จ! 🛵");
+            // 🌟 2. สั่งดึงข้อมูลใหม่ทันที! เมื่อ myJob มีค่า หน้าจอจะเด้งสลับไปหน้า "งานปัจจุบัน" อัตโนมัติ
+            await fetchJobs(user); 
+        } else {
+            toast.error("รับงานไม่สำเร็จ: มีคนรับไปก่อนแล้วครับ");
+            await fetchJobs(user); // โหลดใหม่เพื่อให้งานที่หายไปแล้วออกไปจากหน้าจอ
+        }
     };
 
-    // 2. 💬 ระบบแชท Real-time
-    const openChat = async (order) => {
-        setCurrentOrder(order);
-        setShowChat(true);
-        const { data } = await supabase.from('messages').select('*').eq('order_id', order.id).order('created_at', { ascending: true });
-        setMessages(data || []);
+    // --- ✅ 4. ฟังก์ชัน "ส่งสำเร็จ" (จบงาน) ---
+    const completeJob = async (id) => {
+        const { error } = await supabase
+            .from('orders')
+            .update({ status: 'completed' }) 
+            .eq('id', id);
 
-        // Listen แชทสด
-        supabase.channel(`chat-${order.id}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `order_id=eq.${order.id}` }, 
-            payload => setMessages(prev => [...prev, payload.new])
-        ).subscribe();
+        if (!error) {
+            toast.success("จบงานเรียบร้อย! ยอดเงินเด้งเข้าแอดมินแล้ว 💰");
+            setMyJob(null);
+            await fetchJobs(user); // เด้งกลับมาหน้า "รับงานใหม่"
+        } else {
+            toast.error("เกิดข้อผิดพลาด: " + error.message);
+        }
     };
 
-    const sendMessage = async () => {
-        if (!newMessage.trim() || !currentOrder) return;
-        // ✅ แก้ไข: เพิ่มการระบุค่าที่จะบันทึกลงตาราง messages
-        const { error } = await supabase.from('messages').insert();
-        if (!error) setNewMessage('');
-        else toast.error("ส่งข้อความไม่สำเร็จ");
-    };
-
-    // ✅ แก้ไข: ลิงก์ Google Maps ให้ทำงานได้จริง
-    const openMaps = (lat, lng) => window.open(`https://www.google.com{lat},${lng}&travelmode=driving`, '_blank');
-    
-    const handleComplete = async (id) => { 
-        await supabase.from('orders').update({ status: 'completed' }).eq('id', id); 
-        toast.success("ปิดงานสำเร็จ!");
-        fetchJobs(); 
-    };
-
-    if (loading) return <div style={st.loader}>⌛ กำลังเข้าสู่ระบบ...</div>;
+    if (loading && !user) return <div style={st.loader}>🏍️ กำลังค้นหางานด่วน...</div>;
 
     return (
         <div style={st.container}>
-            <Toaster />
+            <Toaster position="top-center" />
             <header style={st.header}>
-                <div>
-                    <h2 style={{ color: '#00ff00', margin: 0 }}>🛵 RIDER DASHBOARD</h2>
-                    <p style={{ margin: 0, color: '#888' }}>กำลังดำเนินการ: {myActiveJobs.length}/3 งาน</p>
-                </div>
+                <h2 style={{color:'#00ff00', margin:0}}>RIDER ONLINE</h2>
                 <button onClick={() => supabase.auth.signOut()} style={st.btnOut}>Logout</button>
             </header>
 
-            {/* ส่วนสลับสถานะออนไลน์ */}
-            <div style={{ marginBottom: '20px' }}>
-                <button 
-                    onClick={async () => {
-                        const { error } = await supabase.from('users').update({ is_online: !isOnline }).eq('id', user.id);
-                        if (!error) setIsOnline(!isOnline);
-                    }}
-                    style={{ ...st.btnToggle, background: isOnline ? '#00c853' : '#444' }}
-                >
-                    {isOnline ? '🟢 ออนไลน์ (พร้อมรับงาน)' : '⚪ ออฟไลน์ (พักผ่อน)'}
-                </button>
-            </div>
-
-            {/* รายการงานปัจจุบัน */}
-            {myActiveJobs.map(job => (
-                <div key={job.id} style={st.activeCard}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                            <b style={{ color: '#fff' }}>👤 {job.customer?.username || 'ลูกค้า'}</b>
-                            <p style={{ fontSize: '13px', color: '#aaa', margin: '5px 0' }}>📍 {job.address}</p>
-                        </div>
-                        <span style={{ fontSize: '12px', background: '#333', padding: '2px 8px', borderRadius: '5px' }}>฿{job.total_price}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                        <button onClick={() => openMaps(job.lat, job.lng)} style={st.btnSmall}>🗺️ แผนที่</button>
-                        <button onClick={() => openChat(job)} style={st.btnSmall}>💬 แชท</button>
-                        <button onClick={() => handleComplete(job.id)} style={{ ...st.btnSmall, background: '#00ff00', color: '#000', fontWeight: 'bold' }}>✅ สำเร็จ</button>
-                    </div>
-                </div>
-            ))}
-
-            <h4 style={{ color: '#f60', borderBottom: '1px solid #222', paddingBottom: '10px' }}>📦 งานใหม่ที่เปิดรับ ({availableJobs.length})</h4>
-            {availableJobs.map(job => (
-                <div key={job.id} style={st.jobCard}>
-                    <div style={{ flex: 1 }}>
-                        <b style={{ fontSize: '14px' }}>📍 {job.address.slice(0, 30)}...</b>
-                        <p style={{ margin: '5px 0', fontSize: '12px', color: '#888' }}>ค่าอาหาร: ฿{job.total_price}</p>
-                    </div>
-                    <button onClick={() => handleAccept(job.id)} style={st.btnAccept}>รับงาน</button>
-                </div>
-            ))}
-
-            {/* --- Modal แชท --- */}
-            {showChat && (
-                <div style={st.modal}>
-                    <div style={st.chatBox}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                            <h4 style={{ margin: 0 }}>แชท: {currentOrder?.customer?.username}</h4>
-                            <button onClick={() => setShowChat(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: '20px', cursor: 'pointer' }}>×</button>
-                        </div>
-                        <div style={st.messageList}>
-                            {messages.map((m, i) => (
-                                <div key={i} style={{ textAlign: m.sender_id === user.id ? 'right' : 'left' }}>
-                                    <p style={m.sender_id === user.id ? st.msgMe : st.msgYou}>{m.text}</p>
-                                </div>
-                            ))}
-                        </div>
-                        <div style={{ display: 'flex', gap: '5px' }}>
-                            <input 
-                                value={newMessage} 
-                                onChange={e => setNewMessage(e.target.value)} 
-                                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                                style={st.input} 
-                                placeholder="พิมพ์ข้อความ..." 
-                            />
-                            <button onClick={sendMessage} style={st.btnAccept}>ส่ง</button>
+            <main style={{ marginTop: '20px' }}>
+                {/* 🌟 จุดตัดสินใจ: ถ้ามีงานในมือ (myJob) จะโชว์หน้าส่งของ / ถ้าไม่มีจะโชว์รายการงานว่าง */}
+                {myJob ? (
+                    <div style={st.activeCard}>
+                        <h3 style={{marginTop:0, color:'#00ff00'}}>📍 งานปัจจุบันที่คุณกำลังนำส่ง</h3>
+                        <div style={st.cardInner}>
+                            <b style={{fontSize:'1.1rem'}}>ออเดอร์: #{myJob.id.slice(0,8)}</b>
+                            <div style={st.infoBox}>
+                                <p>💰 <b>ยอดเก็บเงินลูกค้า:</b> <span style={{color:'#f60', fontSize:'1.4rem'}}>฿{myJob.total_price || 0}</span></p>
+                                <p>🏠 <b>ที่อยู่ส่งของ:</b> {myJob.address || 'กรุณาดูตามพิกัด'}</p>
+                                <p>📍 <b>พิกัด:</b> {myJob.lat}, {myJob.lng}</p>
+                            </div>
+                            <div style={{display:'flex', gap:'10px', marginTop:'20px'}}>
+                                // เปลี่ยนจาก '/Chat' เป็น '/chat' (ใช้ตัวพิมพ์เล็กให้ตรงกับชื่อไฟล์และ App.jsx)
+<button onClick={() => navigate('/chat', { state: { orderId: myJob.id } })} style={st.btnChat}> 💬 แชทหาลูกค้า </button>
+                                <button onClick={() => completeJob(myJob.id)} style={st.btnDone}>✅ ส่งสำเร็จ (จบงาน)</button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                ) : (
+                    <div>
+                        <h3 style={{borderLeft:'4px solid #00ff00', paddingLeft:'10px'}}>📦 งานใหม่ที่พร้อมรับ ({availableJobs.length})</h3>
+                        {availableJobs.length === 0 ? (
+                            <div style={{textAlign:'center', marginTop:'80px'}}>
+                                <p style={{fontSize:'40px'}}>📭</p>
+                                <p style={{color:'#888'}}>ยังไม่มีงานใหม่เข้ามาในขณะนี้... <br/>ระบบจะเด้งอัตโนมัติเมื่อแอดมินส่งงานมาครับ</p>
+                            </div>
+                        ) : (
+                            <div style={st.grid}>
+                                {availableJobs.map(job => (
+                                    <div key={job.id} style={st.card}>
+                                        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                                            <div>
+                                                <b style={{fontSize:'1.1rem'}}>ID: #{job.id.slice(0,5)}</b>
+                                                <p style={{margin:'5px 0', color:'#888', fontSize:'0.9rem'}}>📍 {job.address || 'ที่อยู่ลูกค้า'}</p>
+                                            </div>
+                                            <b style={{color:'#00ff00', fontSize:'1.3rem'}}>฿{job.total_price || 0}</b>
+                                        </div>
+                                        <button onClick={() => acceptJob(job.id)} style={st.btnAccept}>🏍️ กดรับงานนี้</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </main>
         </div>
     );
 };
 
+// --- CSS Styles (ปรับปรุงให้อ่านข้อมูลลูกค้าได้ชัดเจน) ---
 const st = {
     container: { background: '#000', color: '#fff', minHeight: '100vh', padding: '20px', fontFamily: 'Kanit, sans-serif' },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-    btnOut: { background: '#222', color: '#888', border: 'none', padding: '6px 15px', borderRadius: '20px', cursor: 'pointer' },
-    btnToggle: { width: '100%', padding: '12px', border: 'none', borderRadius: '10px', color: '#fff', fontWeight: 'bold', cursor: 'pointer' },
-    activeCard: { background: '#111', padding: '15px', borderRadius: '15px', border: '1px solid #00ff00', marginBottom: '15px' },
-    btnSmall: { flex: 1, padding: '10px', fontSize: '13px', cursor: 'pointer', background: '#222', color: '#fff', border: '1px solid #333', borderRadius: '8px' },
-    jobCard: { background: '#111', padding: '15px', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', border: '1px solid #222' },
-    btnAccept: { background: '#f60', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
-    modal: { position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.9)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
-    chatBox: { background: '#111', width: '90%', maxWidth: '400px', padding: '20px', borderRadius: '20px', border: '1px solid #333' },
-    messageList: { height: '350px', overflowY: 'auto', marginBottom: '15px', padding: '10px', background: '#000', borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '8px' },
-    msgMe: { display: 'inline-block', background: '#f60', color: '#fff', padding: '8px 15px', borderRadius: '15px 15px 0 15px', margin: 0, maxWidth: '80%' },
-    msgYou: { display: 'inline-block', background: '#333', color: '#fff', padding: '8px 15px', borderRadius: '15px 15px 15px 0', margin: 0, maxWidth: '80%' },
-    input: { flex: 1, background: '#222', color: '#fff', border: 'none', padding: '12px', borderRadius: '10px' },
-    loader: { height: '100vh', background: '#000', color: '#00ff00', display: 'flex', justifyContent: 'center', alignItems: 'center' }
+    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' },
+    activeCard: { background: '#111', padding: '25px', borderRadius: '25px', border: '2px solid #00ff00' },
+    cardInner: { background: '#000', padding: '20px', borderRadius: '15px', marginTop: '15px' },
+    infoBox: { marginTop: '10px', borderTop: '1px solid #222', paddingTop: '15px', lineHeight: '1.8' },
+    grid: { display: 'flex', flexDirection: 'column', gap: '15px' },
+    card: { background: '#111', padding: '20px', borderRadius: '20px', border: '1px solid #222' },
+    btnAccept: { width: '100%', background: '#00ff00', color: '#000', border: 'none', padding: '15px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', marginTop: '15px' },
+    btnDone: { flex: 2, background: '#f60', color: '#fff', border: 'none', padding: '15px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
+    btnChat: { flex: 1, background: '#333', color: '#fff', border: 'none', padding: '15px', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' },
+    btnOut: { background: 'none', color: '#888', border: '1px solid #333', padding: '5px 15px', borderRadius: '20px', cursor: 'pointer' },
+    loader: { height: '100vh', background: '#000', color: '#00ff00', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.2rem' }
 };
 
 export default RiderDashboard;

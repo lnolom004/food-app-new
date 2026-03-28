@@ -1,58 +1,176 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from './supabase.jsx'; 
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { supabase } from './supabase';
 import { toast, Toaster } from 'react-hot-toast';
 
-const MyOrders = () => {
-    const [orders, setOrders] = useState([]);
-    const [loading, setLoading] = useState(true);
+const Chat = () => {
+    const location = useLocation();
     const navigate = useNavigate();
+    const scrollRef = useRef();
 
-    const fetchOrders = async () => {
-        try {
-            const { data: { user } } = await supabase.auth.getUser();
-            const { data } = await supabase.from('orders').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-            setOrders(data || []);
-        } finally { setLoading(false); }
+    // 🛡️ 1. ดึง orderId จาก State (ถ้ากดกลับมาแล้วหาย ให้เด้งกลับหน้าเดิมป้องกันหน้าขาว)
+    const orderId = location.state?.orderId; 
+
+    const [messages, setMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [myProfile, setMyProfile] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    // 📥 2. ฟังก์ชันโหลดประวัติแชทและโปรไฟล์ (ดึงใหม่ทุกครั้งที่เข้าหน้าจอ)
+    const initChat = useCallback(async () => {
+        if (!orderId) {
+            toast.error("ไม่พบรหัสออเดอร์ หรือเซสชันหมดอายุ");
+            return navigate(-1); // ดีดกลับหน้าเดิมถ้าไม่มี ID
+        }
+
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return navigate('/login');
+
+        // ดึงโปรไฟล์เรา (เพื่อแยกฝั่งแชท ซ้าย/ขวา)
+        const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
+        setMyProfile(profile);
+
+        // ดึงประวัติแชทเก่าทั้งหมดที่มีในออเดอร์นี้
+        const { data: oldMsgs, error } = await supabase
+            .from('messages')
+            .select('*, users:sender_id(username, role)') 
+            .eq('order_id', orderId)
+            .order('created_at', { ascending: true });
+
+        if (error) {
+            console.error("Fetch Messages Error:", error.message);
+        } else {
+            setMessages(oldMsgs || []);
+        }
+        setLoading(false);
+    }, [orderId, navigate]);
+
+    // 🔄 3. ระบบ Real-time: รับข้อความใหม่ + ตรวจสอบสถานะออเดอร์
+    useEffect(() => {
+        initChat();
+
+        if (!orderId) return;
+
+        // ดักฟังข้อความใหม่
+        const msgChannel = supabase.channel(`chat-room-${orderId}`)
+            .on('postgres_changes', 
+                { event: 'INSERT', schema: 'public', table: 'messages', filter: `order_id=eq.${orderId}` }, 
+                async (payload) => {
+                    const { data: sender } = await supabase.from('users').select('username, role').eq('id', payload.new.sender_id).single();
+                    setMessages(prev => [...prev, { ...payload.new, users: sender }]);
+                }
+            )
+            .subscribe();
+
+        // 🏍️ ฟังสถานะออเดอร์: ถ้าไรเดอร์กดจบงาน ให้ดีดออกจากแชททันที (ตามที่นายเคยขอ)
+        const orderChannel = supabase.channel(`status-${orderId}`)
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` }, 
+            (payload) => {
+                if (payload.new.status === 'completed') {
+                    toast.success("ออเดอร์สำเร็จแล้ว ปิดห้องแชทอัตโนมัติ");
+                    navigate(-1);
+                }
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(msgChannel);
+            supabase.removeChannel(orderChannel);
+        };
+    }, [orderId, initChat, navigate]);
+
+    // เลื่อนจอลงล่างสุดอัตโนมัติ
+    useEffect(() => {
+        scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    // 📤 4. ฟังก์ชันส่งข้อความ
+    const handleSend = async (e) => {
+        e.preventDefault();
+        if (!newMessage.trim() || !orderId || !myProfile) return;
+
+        const content = newMessage;
+        setNewMessage(''); // ล้างช่องพิมพ์ (Optimistic UI)
+
+        const { error } = await supabase.from('messages').insert([{
+            order_id: orderId,
+            sender_id: myProfile.id,
+            content: content
+        }]);
+
+        if (error) {
+            toast.error("ส่งไม่สำเร็จ");
+            setNewMessage(content);
+        }
     };
 
-    useEffect(() => { fetchOrders(); }, []);
-
-    const cancelOrder = async (id) => {
-        if (!window.confirm("ยกเลิกออเดอร์?")) return;
-        await supabase.from('orders').update({ status: 'cancelled' }).eq('id', id).eq('status', 'pending');
-        fetchOrders();
-    };
-
-    if (loading) return <div style={{background:'#000', height:'100vh'}} />;
+    if (loading) return <div style={st.loader}>💬 กำลังโหลดประวัติแชท...</div>;
 
     return (
-        <div style={{ background: '#000', color: '#fff', minHeight: '100vh', padding: '20px' }}>
-            <Toaster />
-            <button onClick={() => navigate('/menu')} style={{background:'#222', color:'#fff', border:'none', padding:'10px', borderRadius:'10px', marginBottom:'20px'}}>⬅️ กลับ</button>
-            <div style={{ maxWidth: '500px', margin: '0 auto' }}>
-                {orders.map(order => (
-                    <div key={order.id} style={{ background: '#111', padding: '15px', borderRadius: '15px', marginBottom: '15px', border: '1px solid #333' }}>
-                        <div style={{display:'flex', justifyContent:'space-between'}}>
-                            <b style={{color: '#f60'}}>{order.status.toUpperCase()}</b>
-                            <span>฿{order.total_price} ({order.payment_method === 'cash' ? 'เงินสด' : 'โอนจ่าย'})</span>
-                        </div>
-                        <p style={{fontSize:'12px', color:'#888'}}>{order.address}</p>
-                        
-                        {order.status === 'pending' && <button onClick={() => cancelOrder(order.id)} style={{background:'#f44336', color:'#fff', border:'none', padding:'5px 10px', borderRadius:'5px'}}>❌ ยกเลิก</button>}
-                        
-                        {/* 🛵 ส่วนติดต่อไรเดอร์ */}
-                        {order.rider_id && order.status !== 'completed' && (
-                            <div style={{marginTop:'10px', padding:'10px', background:'#222', borderRadius:'10px', border:'1px solid #4caf50'}}>
-                                <p style={{margin:0, fontSize:'13px'}}>🛵 ไรเดอร์กำลังมาส่ง...</p>
-                                <button onClick={() => window.location.href=`tel:0000000000`} style={{background:'#4caf50', color:'#fff', border:'none', padding:'8px', width:'100%', borderRadius:'8px', marginTop:'5px'}}>📞 โทรหาคนขับ</button>
+        <div style={st.container}>
+            <Toaster position="top-center" />
+            
+            <header style={st.header}>
+                <button onClick={() => navigate(-1)} style={st.backBtn}>⬅️ ย้อนกลับ</button>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                    <h3 style={{ margin: 0, color: '#f60' }}>
+                        แชทออเดอร์ #{orderId.slice(0, 5)}
+                    </h3>
+                    <small style={{ color: '#4caf50' }}>● ไรเดอร์และลูกค้าเชื่อมต่ออยู่</small>
+                </div>
+            </header>
+
+            <div style={st.chatArea}>
+                {messages.map((msg, index) => {
+                    const isMe = msg.sender_id === myProfile?.id;
+                    return (
+                        <div key={index} style={{ ...st.msgRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+                            <div style={{ maxWidth: '80%' }}>
+                                {!isMe && (
+                                    <small style={st.senderName}>
+                                        {msg.users?.username} ({msg.users?.role})
+                                    </small>
+                                )}
+                                <div style={{ 
+                                    ...st.bubble, 
+                                    backgroundColor: isMe ? '#f60' : '#222', 
+                                    borderRadius: isMe ? '15px 15px 2px 15px' : '15px 15px 15px 2px' 
+                                }}>
+                                    {msg.content}
+                                </div>
                             </div>
-                        )}
-                    </div>
-                ))}
+                        </div>
+                    );
+                })}
+                <div ref={scrollRef} />
             </div>
+
+            <form onSubmit={handleSend} style={st.inputBar}>
+                <input 
+                    style={st.input} 
+                    value={newMessage} 
+                    onChange={(e) => setNewMessage(e.target.value)} 
+                    placeholder="พิมพ์ข้อความที่นี่..." 
+                />
+                <button type="submit" style={st.sendBtn}>ส่ง</button>
+            </form>
         </div>
     );
 };
 
-export default MyOrders;
+// --- ✨ Styles ระดับเทพ (Dark Mode) ---
+const st = {
+    container: { background: '#000', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'Kanit, sans-serif' },
+    header: { padding: '15px', background: '#111', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', color: '#fff' },
+    backBtn: { background: '#333', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '10px', cursor: 'pointer', fontSize: '14px' },
+    chatArea: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px' },
+    msgRow: { display: 'flex', width: '100%' },
+    bubble: { padding: '12px 16px', color: '#fff', fontSize: '14px', wordBreak: 'break-word', boxShadow: '0 2px 5px rgba(0,0,0,0.2)' },
+    senderName: { fontSize: '10px', color: '#888', marginBottom: '4px', display: 'block', marginLeft: '5px' },
+    inputBar: { padding: '15px', background: '#111', borderTop: '1px solid #222', display: 'flex', gap: '10px' },
+    input: { flex: 1, padding: '12px 18px', borderRadius: '25px', background: '#222', border: '1px solid #333', color: '#fff', outline: 'none' },
+    sendBtn: { background: '#f60', color: '#fff', border: 'none', padding: '0 25px', borderRadius: '25px', fontWeight: 'bold', cursor: 'pointer' },
+    loader: { height: '100vh', background: '#000', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.2rem' }
+};
+
+export default Chat;

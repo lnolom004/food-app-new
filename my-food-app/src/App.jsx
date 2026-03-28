@@ -3,47 +3,66 @@ import { supabase } from './supabase.jsx';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
-// 🛡️ เช็คชื่อไฟล์: ต้องเป็นตัวเล็กตามที่ปรากฏในเครื่องเป๊ะๆ (o ตัวเล็ก, m ตัวเล็ก)
+// --- 🛡️ นำเข้าหน้าต่างๆ (เช็คชื่อไฟล์ให้ตรงตามเครื่องนายนะ) ---
 import Login from './Login.jsx'; 
 import Register from './Register.jsx';
 import AdminDashboard from './admin.jsx';   
-import OrderFood from './orderFood.jsx'; // 👈 o ตัวเล็ก     
+import OrderFood from './orderFood.jsx';     
 import RiderDashboard from './rider.jsx';   
-import MyOrders from './myorders.jsx';   // 👈 m ตัวเล็ก     
+import MyOrders from './myorders.jsx';      
+import Chat from './chat.jsx'; // 👈 1. เพิ่มการนำเข้าไฟล์แชทตรงนี้!
 
 export default function App() {
     const [user, setUser] = useState(null);
     const [role, setRole] = useState(null);
+    const [isApproved, setIsApproved] = useState(false);
     const [loading, setLoading] = useState(true);
 
+    // 1️⃣ ฟังก์ชันเช็คสิทธิ์ (Role Check)
     const checkUserRole = async (sessionUser) => {
-        if (!sessionUser) { setLoading(false); return; }
+        if (!sessionUser) {
+            setRole(null);
+            setLoading(false);
+            return;
+        }
         try {
-            const { data } = await supabase.from('users').select('role').eq('id', sessionUser.id).single();
-            setRole(data?.role || 'customer'); // 👈 ใช้ 'customer' ตามใน DB ของคุณ
-        } catch (e) { setRole('customer'); }
-        finally { setLoading(false); }
+            const { data, error } = await supabase
+                .from('users')
+                .select('role, is_approved')
+                .eq('id', sessionUser.id)
+                .single();
+            
+            if (data) {
+                setRole(data.role); 
+                setIsApproved(data.is_approved);
+            }
+        } catch (e) {
+            console.error("Role Check Error:", e);
+            setRole('customer'); 
+        } finally {
+            setLoading(false); 
+        }
     };
 
+    // 2️⃣ ฟังก์ชันติดตามสถานะ Login (Auth Listener)
     useEffect(() => {
-        const init = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            setUser(session?.user ?? null);
-            if (session?.user) await checkUserRole(session.user);
-            else setLoading(false);
-        };
-        init();
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            const u = session?.user ?? null;
+            setUser(u);
+            checkUserRole(u);
+        });
+
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setUser(session?.user ?? null);
-            if (session?.user) checkUserRole(session.user);
-            else { setRole(null); setLoading(false); }
+            const u = session?.user ?? null;
+            setUser(u);
+            checkUserRole(u);
         });
         return () => subscription.unsubscribe();
     }, []);
 
     if (loading) return (
-        <div style={{ background: '#000', height: '100vh', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <h2>⌛ ระบบกำลังยืนยันตัวตน...</h2>
+        <div style={{ background: '#000', height: '100vh', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center', fontFamily: 'Kanit' }}>
+            <h2>⌛ กำลังยืนยันตัวตน...</h2>
         </div>
     );
 
@@ -51,6 +70,7 @@ export default function App() {
         <>
             <Toaster position="top-center" />
             <Routes>
+                {/* --- 🟢 กรณีที่ยังไม่ได้ Login --- */}
                 {!user ? (
                     <>
                         <Route path="/login" element={<Login />} />
@@ -58,21 +78,52 @@ export default function App() {
                         <Route path="*" element={<Navigate to="/login" replace />} />
                     </>
                 ) : (
+                    /* --- 🔴 กรณีที่ Login แล้ว --- */
                     <>
-                        {role === 'admin' && <Route path="/admin" element={<AdminDashboard />} />}
-                        {role === 'rider' && <Route path="/rider" element={<RiderDashboard />} />}
-                        {/* 🛡️ รองรับทั้ง /menu และ /order เพื่อกันจอขาว */}
-                        {role === 'customer' && (
+                        {/* 🛠️ ส่วนของ ADMIN */}
+                        {role === 'admin' && (
+                            <Route path="/admin" element={<AdminDashboard />} />
+                        )}
+
+                        {/* 🏍️ ส่วนของ RIDER */}
+                        {role === 'rider' && (
+                            <Route path="/rider" element={
+                                isApproved ? <RiderDashboard /> : 
+                                <div style={st.lockScreen}>
+                                    <h2>⏳ รอแอดมินอนุมัติสิทธิ์ไรเดอร์</h2>
+                                    <p>ระบบจะแจ้งให้ทราบเมื่อเข้าใช้งานได้</p>
+                                    <button onClick={() => supabase.auth.signOut()} style={st.btnOut}>Logout</button>
+                                </div>
+                            } />
+                        )}
+
+                        {/* 🍴 ส่วนของ CUSTOMER */}
+                        {(role === 'customer' || role === 'user') && (
                             <>
                                 <Route path="/menu" element={<OrderFood />} />
-                                <Route path="/order" element={<OrderFood />} /> 
                                 <Route path="/myorders" element={<MyOrders />} /> 
                             </>
                         )}
-                        <Route path="*" element={<Navigate to="/menu" replace />} />
+
+                        {/* 💬 🌟 2. เพิ่ม Route สำหรับหน้าแชทตรงนี้ เพื่อให้ทุกคนเข้าถึงได้! 🌟 */}
+                        <Route path="/chat" element={<Chat />} />
+                        
+                        {/* 💡 ฟังก์ชัน Auto-Redirect */}
+                        <Route path="*" element={
+                            <Navigate to={
+                                role === 'admin' ? "/admin" : 
+                                role === 'rider' ? "/rider" : 
+                                "/menu" 
+                            } replace />
+                        } />
                     </>
                 )}
             </Routes>
         </>
     );
 }
+
+const st = {
+    lockScreen: { padding:'50px', textAlign:'center', background:'#000', color:'#fff', height:'100vh', display:'flex', flexDirection:'column', justifyContent:'center', fontFamily: 'Kanit' },
+    btnOut: { marginTop:'20px', background:'#f60', color:'#fff', border:'none', padding:'12px 25px', borderRadius:'10px', cursor:'pointer', fontWeight:'bold' }
+};

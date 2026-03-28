@@ -1,66 +1,82 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { supabase } from './supabase';
-import { toast } from 'react-hot-toast';
+import { toast, Toaster } from 'react-hot-toast';
 
 const Chat = () => {
-    const { orderId } = useParams();
+    const location = useLocation();
     const navigate = useNavigate();
+    const scrollRef = useRef();
+
+    // 🛡️ 1. ดึง orderId (รองรับทั้งการกดมาจากหน้า Rider และ Customer)
+    const orderId = location.state?.orderId; 
+
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [myProfile, setMyProfile] = useState(null);
     const [loading, setLoading] = useState(true);
-    const scrollRef = useRef();
 
-    // 1. ดึงข้อมูลโปรไฟล์และประวัติแชท
+    // 📥 2. ฟังก์ชันโหลดโปรไฟล์และประวัติแชท (แก้ Error 400 เรื่อง Relationship)
     const initChat = useCallback(async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return navigate('/login');
-
-        // ดึงชื่อและบทบาทของเรา
-        const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
-        setMyProfile(profile);
-
-        // เช็คสถานะออเดอร์ (ถ้าสำเร็จแล้ว ห้ามแชทต่อ)
-        const { data: order } = await supabase.from('orders').select('status').eq('id', orderId).single();
-        if (order?.status === 'completed') {
-            toast.error("ออเดอร์นี้เสร็จสิ้นแล้ว ไม่สามารถแชทได้");
+        if (!orderId) {
+            toast.error("ไม่พบรหัสออเดอร์");
             return navigate(-1);
         }
 
-        // ดึงข้อความเก่าทั้งหมด
-        const { data: oldMsgs } = await supabase
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return navigate('/login');
+
+        // ดึงโปรไฟล์เราเอง
+        const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
+        setMyProfile(profile);
+
+        // ดึงข้อความเก่า (ดึงแบบเรียบง่ายเพื่อเลี่ยง Error 400)
+        const { data: oldMsgs, error } = await supabase
             .from('messages')
-            .select('*, users:sender_id(username, role)')
+            .select('*') 
             .eq('order_id', orderId)
             .order('created_at', { ascending: true });
 
-        if (oldMsgs) setMessages(oldMsgs);
+        if (error) {
+            console.error("Fetch Messages Error:", error.message);
+            setLoading(false);
+            return;
+        }
+
+        // 💡 ดึงชื่อคนส่งมาแปะทีหลัง เพื่อความเทพและข้อมูลครบถ้วน
+        const enrichedMsgs = await Promise.all((oldMsgs || []).map(async (msg) => {
+            const { data: sender } = await supabase.from('users').select('username, role').eq('id', msg.sender_id).single();
+            return { ...msg, users: sender };
+        }));
+
+        setMessages(enrichedMsgs);
         setLoading(false);
     }, [orderId, navigate]);
 
+    // 🔄 3. ระบบ Real-time: ฟังข้อความใหม่ + สถานะออเดอร์
     useEffect(() => {
         initChat();
 
-        // 2. ระบบ Real-time: ฟังข้อความใหม่
-        const msgChannel = supabase.channel(`chat-${orderId}`)
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `order_id=eq.${orderId}` }, 
-            async (payload) => {
-                const { data: sender } = await supabase.from('users').select('username, role').eq('id', payload.new.sender_id).single();
-                setMessages(prev => [...prev, { ...payload.new, users: sender }]);
-            })
-            .subscribe();
+        if (!orderId) return;
 
-        // 3. ระบบ Real-time: ฟังการปิดออเดอร์ (ถ้าไรเดอร์กดส่งสำเร็จ ให้ดีดออกจากแชททันที)
-        const orderChannel = supabase.channel(`status-${orderId}`)
+        // ดักฟังข้อความใหม่เด้งเข้าหน้าจอ
+        const msgChannel = supabase.channel(`chat-room-${orderId}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `order_id=eq.${orderId}` }, 
+                async (payload) => {
+                    const { data: sender } = await supabase.from('users').select('username, role').eq('id', payload.new.sender_id).single();
+                    setMessages(prev => [...prev, { ...payload.new, users: sender }]);
+                }
+            ).subscribe();
+
+        // ฟังสถานะออเดอร์: ถ้าสำเร็จ ให้ปิดแชททันที
+        const orderChannel = supabase.channel(`status-check-${orderId}`)
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` }, 
             (payload) => {
                 if (payload.new.status === 'completed') {
-                    toast.success("ออเดอร์ส่งถึงที่หมายแล้ว ปิดห้องแชท");
+                    toast.success("ออเดอร์สำเร็จแล้ว ปิดห้องแชทอัตโนมัติ");
                     navigate(-1);
                 }
-            })
-            .subscribe();
+            }).subscribe();
 
         return () => {
             supabase.removeChannel(msgChannel);
@@ -68,17 +84,18 @@ const Chat = () => {
         };
     }, [orderId, initChat, navigate]);
 
-    // เลื่อนจอลงล่างสุดเมื่อมีข้อความใหม่
+    // เลื่อนจอลงล่างสุด
     useEffect(() => {
         scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    // 📤 4. ฟังก์ชันส่งข้อความ
     const handleSend = async (e) => {
         e.preventDefault();
-        if (!newMessage.trim()) return;
+        if (!newMessage.trim() || !orderId || !myProfile) return;
 
         const content = newMessage;
-        setNewMessage(''); // ล้างช่องพิมพ์ทันที (Optimistic UI)
+        setNewMessage(''); 
 
         const { error } = await supabase.from('messages').insert([{
             order_id: orderId,
@@ -86,18 +103,22 @@ const Chat = () => {
             content: content
         }]);
 
-        if (error) toast.error("ส่งข้อความไม่สำเร็จ");
+        if (error) {
+            toast.error("ส่งไม่สำเร็จ");
+            setNewMessage(content);
+        }
     };
 
-    if (loading) return <div style={st.loader}>💬 กำลังเข้าสู่ห้องแชท...</div>;
+    if (loading) return <div style={st.loader}>💬 กำลังโหลดประวัติแชท...</div>;
 
     return (
         <div style={st.container}>
+            <Toaster position="top-center" />
             <header style={st.header}>
-                <button onClick={() => navigate(-1)} style={st.backBtn}>⬅️</button>
+                <button onClick={() => navigate(-1)} style={st.backBtn}>⬅️ ย้อนกลับ</button>
                 <div style={{ textAlign: 'center', flex: 1 }}>
                     <h3 style={{ margin: 0, color: '#f60' }}>แชทออเดอร์ #{orderId.slice(0, 5)}</h3>
-                    <small style={{ color: '#4caf50' }}>● กำลังออนไลน์</small>
+                    <small style={{ color: '#4caf50' }}>● เชื่อมต่อเรียบร้อย</small>
                 </div>
             </header>
 
@@ -108,7 +129,11 @@ const Chat = () => {
                         <div key={index} style={{ ...st.msgRow, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
                             <div style={{ maxWidth: '80%' }}>
                                 {!isMe && <small style={st.senderName}>{msg.users?.username} ({msg.users?.role})</small>}
-                                <div style={{ ...st.bubble, backgroundColor: isMe ? '#f60' : '#222', borderRadius: isMe ? '15px 15px 2px 15px' : '15px 15px 15px 2px' }}>
+                                <div style={{ 
+                                    ...st.bubble, 
+                                    backgroundColor: isMe ? '#f60' : '#222', 
+                                    borderRadius: isMe ? '15px 15px 2px 15px' : '15px 15px 15px 2px' 
+                                }}>
                                     {msg.content}
                                 </div>
                             </div>
@@ -126,18 +151,19 @@ const Chat = () => {
     );
 };
 
+// --- ✨ Styles ระดับเทพ ---
 const st = {
-    container: { background: '#000', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'Kanit' },
+    container: { background: '#000', height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'Kanit, sans-serif' },
     header: { padding: '15px', background: '#111', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', color: '#fff' },
-    backBtn: { background: 'none', border: 'none', color: '#fff', fontSize: '20px', cursor: 'pointer' },
+    backBtn: { background: '#333', border: 'none', color: '#fff', padding: '8px 12px', borderRadius: '10px', cursor: 'pointer' },
     chatArea: { flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px' },
     msgRow: { display: 'flex', width: '100%' },
-    bubble: { padding: '12px 16px', color: '#fff', fontSize: '14px' },
+    bubble: { padding: '12px 16px', color: '#fff', fontSize: '14px', wordBreak: 'break-word' },
     senderName: { fontSize: '10px', color: '#888', marginBottom: '4px', display: 'block' },
     inputBar: { padding: '15px', background: '#111', borderTop: '1px solid #222', display: 'flex', gap: '10px' },
-    input: { flex: 1, padding: '12px', borderRadius: '25px', background: '#222', border: '1px solid #333', color: '#fff', outline: 'none' },
-    sendBtn: { background: '#f60', color: '#fff', border: 'none', padding: '0 20px', borderRadius: '25px', fontWeight: 'bold' },
-    loader: { height: '100vh', background: '#000', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' }
+    input: { flex: 1, padding: '12px 18px', borderRadius: '25px', background: '#222', border: '1px solid #333', color: '#fff', outline: 'none' },
+    sendBtn: { background: '#f60', color: '#fff', border: 'none', padding: '0 25px', borderRadius: '25px', fontWeight: 'bold', cursor: 'pointer' },
+    loader: { height: '100vh', background: '#000', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center', fontSize: '1.2rem' }
 };
 
 export default Chat;
