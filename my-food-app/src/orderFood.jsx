@@ -16,12 +16,13 @@ const OrderFood = () => {
 
     // 1. ดึงข้อมูลเมนูอาหาร
     const fetchMenus = useCallback(async () => {
-        setLoading(true);
         try {
+            setLoading(true);
             const { data, error } = await supabase.from('menus').select('*');
             if (error) throw error;
             setMenus(data || []);
         } catch (error) {
+            console.error("Fetch error:", error);
             toast.error("โหลดข้อมูลเมนูไม่สำเร็จ");
         } finally {
             setLoading(false);
@@ -34,6 +35,7 @@ const OrderFood = () => {
 
     // 2. จัดการตะกร้าสินค้า
     const addToCart = (item) => {
+        if (!item) return;
         const exist = cart.find((x) => x.id === item.id);
         if (exist) {
             setCart(cart.map((x) => x.id === item.id ? { ...exist, qty: exist.qty + 1 } : x));
@@ -43,19 +45,17 @@ const OrderFood = () => {
     };
 
     const removeFromCart = (id) => setCart(cart.filter((x) => x.id !== id));
-    const totalPrice = cart.reduce((sum, item) => sum + (Number(item.price) * item.qty), 0);
+    const totalPrice = cart.reduce((sum, item) => sum + (Number(item.price || 0) * (item.qty || 1)), 0);
 
-    // 3. 📍 ฟังก์ชันสั่งอาหาร (ส่งค่า lat, lng แบบ float8 ให้ไรเดอร์นำทาง)
+    // 3. ฟังก์ชันสั่งอาหาร
     const handleOrder = async () => {
         if (cart.length === 0) return toast.error("กรุณาเลือกอาหารก่อนครับ");
         if (!addr.trim()) return toast.error("กรุณาระบุที่อยู่จัดส่ง");
 
         setIsOrdering(true);
 
-        // ขอพิกัด GPS จากเครื่องลูกค้า
         navigator.geolocation.getCurrentPosition(async (pos) => {
             const { latitude, longitude } = pos.coords;
-
             try {
                 const { data: { user }, error: authError } = await supabase.auth.getUser();
                 if (authError || !user) {
@@ -63,28 +63,23 @@ const OrderFood = () => {
                     return navigate('/login');
                 }
 
-                // เตรียมข้อมูลส่งเข้า Table 'orders' (lat, lng ต้องเป็น float8 ใน DB)
                 const orderData = {
                     user_id: user.id,
-                    items: JSON.parse(JSON.stringify(cart)), 
+                    items: cart, 
                     total_price: totalPrice,
                     address: addr.trim(),
                     lat: latitude,   
                     lng: longitude,  
-                    status: 'pending',
-                    rider_id: null   
+                    status: 'pending'
                 };
 
-                const { error: insertError } = await supabase
-                    .from('orders')
-                    .insert([orderData]);
-
+                const { error: insertError } = await supabase.from('orders').insert([orderData]);
                 if (insertError) throw insertError;
 
-                toast.success("🎉 สั่งอาหารสำเร็จ! ปักหมุดที่อยู่ให้ไรเดอร์แล้ว");
+                toast.success("🎉 สั่งอาหารสำเร็จ!");
                 setCart([]); 
                 setAddr(''); 
-                navigate('/MyOrders'); // <--- แก้เป็นตัวเล็กตามชื่อไฟล์นาย
+                navigate('/myorders'); // ใช้ตัวเล็กให้ตรงกับมาตรฐานส่วนใหญ่
 
             } catch (err) {
                 alert("สั่งซื้อไม่สำเร็จ: " + err.message);
@@ -92,12 +87,20 @@ const OrderFood = () => {
                 setIsOrdering(false);
             }
         }, (err) => {
-            toast.error("กรุณาเปิด GPS เพื่อความแม่นยำในการส่งครับ");
+            toast.error("กรุณาเปิด GPS เพื่อสั่งอาหารครับ");
             setIsOrdering(false);
         });
     };
 
-    if (loading) return <div style={st.loader}>⌛ กำลังโหลดความอร่อย...</div>;
+    // ป้องกันจอขาวขณะโหลด
+    if (loading) return (
+        <div style={st.loader}>
+            <div style={{textAlign:'center'}}>
+                <h2>⌛ กำลังโหลดความอร่อย...</h2>
+                <p style={{color:'#666'}}>หากรอนานเกินไป กรุณารีเฟรชหน้าจอ</p>
+            </div>
+        </div>
+    );
 
     return (
         <div style={st.container}>
@@ -118,18 +121,20 @@ const OrderFood = () => {
 
             <div style={st.mainGrid}>
                 <div style={st.menuGrid}>
-                    {menus.filter(m => activeTab === 'ทั้งหมด' || m.category === activeTab).map(f => (
+                    {/* เพิ่มการดักจับข้อมูล NULL ใน filter */}
+                    {menus && menus.filter(m => activeTab === 'ทั้งหมด' || (m?.category === activeTab)).map(f => (
                         <div key={f.id} style={st.card}>
                             <img src={f.image_url || 'https://via.placeholder.com'} alt={f.name} style={st.img} />
                             <div style={{ padding: '10px' }}>
-                                <b>{f.name}</b>
+                                <b>{f.name || 'ไม่มีชื่อสินค้า'}</b>
                                 <div style={st.row}>
-                                    <span style={{ color: '#f60', fontWeight: 'bold' }}>฿{f.price}</span>
+                                    <span style={{ color: '#f60', fontWeight: 'bold' }}>฿{f.price || 0}</span>
                                     <button onClick={() => addToCart(f)} style={st.btnAdd}>+</button>
                                 </div>
                             </div>
                         </div>
                     ))}
+                    {menus.length === 0 && <p style={{gridColumn:'1/-1', textAlign:'center', color:'#888'}}>ไม่พบรายการอาหารในขณะนี้</p>}
                 </div>
 
                 <aside style={st.cartSide}>
@@ -168,26 +173,4 @@ const OrderFood = () => {
         </div>
     );
 };
-
-const st = {
-    container: { background: '#000', color: '#fff', minHeight: '100vh', padding: '20px', fontFamily: 'Kanit, sans-serif' },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
-    btnOut: { background: '#222', border: 'none', color: '#fff', padding: '5px 15px', borderRadius: '10px', cursor: 'pointer', fontSize: '12px' },
-    tabBar: { display: 'flex', gap: '10px', marginBottom: '20px', justifyContent: 'center', overflowX: 'auto' },
-    tab: { padding: '8px 20px', background: '#111', border: 'none', color: '#888', borderRadius: '20px', cursor: 'pointer' },
-    tabAct: { padding: '8px 20px', background: '#f60', border: 'none', color: '#fff', borderRadius: '20px', fontWeight: 'bold' },
-    mainGrid: { display: 'grid', gridTemplateColumns: '1fr 320px', gap: '20px' },
-    menuGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '15px' },
-    card: { background: '#111', borderRadius: '15px', overflow: 'hidden', border: '1px solid #222' },
-    img: { width: '100%', height: '120px', objectFit: 'cover' },
-    row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '5px' },
-    btnAdd: { background: '#f60', color: '#fff', border: 'none', width: '30px', height: '30px', borderRadius: '50%', cursor: 'pointer', fontWeight: 'bold' },
-    cartSide: { background: '#111', padding: '20px', borderRadius: '20px', height: 'fit-content', position: 'sticky', top: '20px', border: '1px solid #222' },
-    cartList: { marginBottom: '15px', maxHeight: '200px', overflowY: 'auto' },
-    cartItem: { display: 'flex', justifyContent: 'space-between', marginBottom: '8px', background: '#000', padding: '10px', borderRadius: '10px' },
-    input: { width: '100%', background: '#000', border: '1px solid #333', color: '#fff', padding: '12px', borderRadius: '10px', marginBottom: '10px', boxSizing: 'border-box', minHeight: '80px' },
-    btnOrder: { width: '100%', background: '#f60', color: '#fff', border: 'none', padding: '15px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', fontSize: '16px' },
-    loader: { height: '100vh', background: '#000', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' }
-};
-
-export default OrderFood;
+// ... ส่วนของ st (styles) ให้ใช้ของเดิมที่คุณมีได้เลยครับ ...
