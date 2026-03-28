@@ -3,7 +3,7 @@ import { supabase } from './supabase.jsx';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
-// 🛡️ นำเข้าไฟล์ (เช็คชื่อไฟล์ให้ตรงตามรูปโครงสร้างที่นายส่งมา: o ตัวเล็ก, m ตัวเล็ก)
+// 🛡️ เช็คชื่อไฟล์ให้ตรงตามที่นายตั้งไว้ (o ตัวเล็ก, m ตัวเล็ก)
 import Login from './Login.jsx'; 
 import Register from './Register.jsx';
 import AdminDashboard from './admin.jsx';   
@@ -14,10 +14,8 @@ import MyOrders from './myorders.jsx';
 export default function App() {
     const [user, setUser] = useState(null);
     const [role, setRole] = useState(null);
-    const [isApproved, setIsApproved] = useState(false);
     const [loading, setLoading] = useState(true);
 
-    // 1. ฟังก์ชันดึงข้อมูลผู้ใช้และ Role จาก Supabase
     const checkUserRole = async (sessionUser) => {
         if (!sessionUser) {
             setRole(null);
@@ -27,41 +25,33 @@ export default function App() {
         try {
             const { data, error } = await supabase
                 .from('users')
-                .select('role, is_approved')
+                .select('role')
                 .eq('id', sessionUser.id)
                 .single();
             
             if (data) {
-                // เก็บค่า 'customer', 'admin' หรือ 'rider' ตามจริงใน DB
-                setRole(data.role);
-                setIsApproved(!!data.is_approved);
-                console.log("Current User Role:", data.role);
-            } else {
-                setRole('customer'); // Default ถ้าหาไม่เจอ
+                setRole(data.role); // จะได้ค่า 'customer', 'admin', หรือ 'rider'
             }
         } catch (e) {
-            console.error("Auth Error:", e);
+            console.error("Role error:", e);
             setRole('customer'); 
         } finally {
-            setLoading(false); // ✅ สั่งหยุดโหลดเพื่อให้ UI แสดงผล
+            setLoading(false); 
         }
     };
 
-    // 2. ตรวจจับการเข้าสู่ระบบ
     useEffect(() => {
-        const initSession = async () => {
+        const init = async () => {
             const { data: { session } } = await supabase.auth.getSession();
-            const u = session?.user ?? null;
-            setUser(u);
-            if (u) await checkUserRole(u);
+            setUser(session?.user ?? null);
+            if (session?.user) await checkUserRole(session.user);
             else setLoading(false);
         };
-        initSession();
+        init();
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            const u = session?.user ?? null;
-            setUser(u);
-            if (u) checkUserRole(u);
+            setUser(session?.user ?? null);
+            if (session?.user) checkUserRole(session.user);
             else {
                 setRole(null);
                 setLoading(false);
@@ -70,13 +60,9 @@ export default function App() {
         return () => subscription.unsubscribe();
     }, []);
 
-    // 3. 🛡️ ป้องกันจอขาวระหว่างรอข้อมูล (ถ้าขึ้นหน้านี้แสดงว่ากำลังโหลด)
     if (loading) return (
-        <div style={{ background: '#000', height: '100vh', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center', fontFamily: 'sans-serif' }}>
-            <div style={{ textAlign: 'center' }}>
-                <h2 style={{ marginBottom: '10px' }}>⌛ ระบบกำลังยืนยันตัวตน...</h2>
-                <p style={{ color: '#666' }}>หากค้างหน้านี้นานเกินไป กรุณารีเฟรช</p>
-            </div>
+        <div style={{ background: '#000', height: '100vh', color: '#f60', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <h2>⌛ ระบบกำลังยืนยันตัวตน...</h2>
         </div>
     );
 
@@ -84,7 +70,6 @@ export default function App() {
         <>
             <Toaster position="top-center" />
             <Routes>
-                {/* --- ส่วนที่ยังไม่ได้ LOGIN --- */}
                 {!user ? (
                     <>
                         <Route path="/login" element={<Login />} />
@@ -92,41 +77,21 @@ export default function App() {
                         <Route path="*" element={<Navigate to="/login" replace />} />
                     </>
                 ) : (
-                    /* --- ส่วนที่ LOGIN แล้ว --- */
                     <>
-                        {/* 🛡️ เส้นทางสำหรับ Admin */}
                         {role === 'admin' && <Route path="/admin" element={<AdminDashboard />} />}
+                        {role === 'rider' && <Route path="/rider" element={<RiderDashboard />} />}
                         
-                        {/* 🛡️ เส้นทางสำหรับ Rider */}
-                        {role === 'rider' && (
-                            <Route path="/rider" element={
-                                isApproved ? <RiderDashboard /> : 
-                                <div style={{padding:'50px', textAlign:'center', background:'#000', color:'#fff', height:'100vh', display:'flex', flexDirection:'column', justifyContent:'center'}}>
-                                    <h2>⏳ บัญชีไรเดอร์รอการอนุมัติ</h2>
-                                    <p style={{color:'#888'}}>กรุณารอแอดมินตรวจสอบข้อมูลของท่าน</p>
-                                    <button onClick={() => supabase.auth.signOut()} style={{marginTop:'20px', background:'#f60', color:'#fff', border:'none', padding:'12px 24px', borderRadius:'10px', cursor:'pointer', fontWeight:'bold'}}>ออกจากระบบ</button>
-                                </div>
-                            } />
-                        )}
-                        
-                        {/* 🛡️ เส้นทางสำหรับ Customer (ลูกค้า) */}
+                        {/* 🛡️ รองรับทั้ง /menu และ /order ให้ชี้ไปที่หน้าสั่งอาหาร */}
                         {role === 'customer' && (
                             <>
-                                {/* รองรับทั้งชื่อไฟล์ /orderFood และพาร์ท /menu หรือ /order เพื่อกันจอขาว */}
                                 <Route path="/menu" element={<OrderFood />} />
                                 <Route path="/order" element={<OrderFood />} /> 
-                                <Route path="/orderFood" element={<OrderFood />} /> 
                                 <Route path="/myorders" element={<MyOrders />} /> 
                             </>
                         )}
                         
-                        {/* 💡 ตัวดักสุดท้าย (Fallback): ถ้าพาร์ทไม่ตรง หรือ Role แปลกๆ ให้ส่งไปหน้าเริ่มต้นที่ปลอดภัยที่สุด */}
-                        <Route path="*" element={
-                            <Navigate to={
-                                role === 'admin' ? "/admin" : 
-                                role === 'rider' ? "/rider" : "/menu"
-                            } replace />
-                        } />
+                        {/* ดักหน้าว่าง ถ้าหาไม่เจอให้ไป /menu */}
+                        <Route path="*" element={<Navigate to="/menu" replace />} />
                     </>
                 )}
             </Routes>
